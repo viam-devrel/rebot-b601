@@ -55,6 +55,13 @@ class B601Gripper(Gripper, EasyResource):
         self._holding = False
 
     @classmethod
+    def new(cls, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
+        # EasyResource's default new() does not call reconfigure; see B601Arm.
+        self = cls(config.name)
+        self.reconfigure(config, dependencies)
+        return self
+
+    @classmethod
     def validate_config(cls, config: ComponentConfig) -> Tuple[Sequence[str], Sequence[str]]:
         attrs = struct_to_dict(config.attributes)
         ratio = float(attrs.get("torque_ratio", DEFAULT_TORQUE_RATIO))

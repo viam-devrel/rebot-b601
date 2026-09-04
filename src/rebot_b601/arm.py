@@ -58,6 +58,15 @@ class B601Arm(Arm, EasyResource):
         self._stop_requested = threading.Event()
 
     @classmethod
+    def new(cls, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
+        # EasyResource's default new() does not call reconfigure, and
+        # viam-server only calls Reconfigure on config changes — so the bus
+        # must be opened here.
+        self = cls(config.name)
+        self.reconfigure(config, dependencies)
+        return self
+
+    @classmethod
     def validate_config(cls, config: ComponentConfig) -> Tuple[Sequence[str], Sequence[str]]:
         attrs = struct_to_dict(config.attributes)
         mode = attrs.get("control_mode", "pos_vel")
