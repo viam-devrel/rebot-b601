@@ -1,0 +1,21 @@
+name: Publish to the Viam registry
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build module tarball
+        run: make module
+      - name: Upload to registry
+        uses: viamrobotics/upload-module@v1
+        with:
+          module-path: module.tar.gz
+          platform: any
+          version: ${{ github.ref_name }}
+          key-id: ${{ secrets.VIAM_DEV_API_KEY_ID }}
+          key-value: ${{ secrets.VIAM_DEV_API_KEY }}

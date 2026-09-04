@@ -1,0 +1,42 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["README.md", "PLAN.md", "CHANGELOG.md"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -r requirements.txt -r requirements-dev.txt
+      - name: Lint
+        run: make lint
+      - name: Unit tests
+        run: make test
+
+  bootstrap:
+    # A clean checkout must start with only python3 + uv, exactly as viam-server would run it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: run.sh --check (uv)
+        run: ./run.sh --check
+      - name: run.sh --check (venv + pip fallback)
+        run: |
+          rm -rf .venv
+          PATH=$(echo "$PATH" | tr ':' '\n' | grep -v uv | paste -sd:) ./run.sh --check
