@@ -1,0 +1,7 @@
+pytest>=8
+pytest-asyncio>=0.23
+ruff>=0.5
+numpy
+pytransform3d
+trimesh>=4
+fast-simplification

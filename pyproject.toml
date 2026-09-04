@@ -1,0 +1,25 @@
+[project]
+name = "viam-rebot-b601"
+version = "0.2.0"
+description = "Viam module for the Seeed Studio reBot Arm B601-DM"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [".venv", "src/rebot_b601/assets"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = ["E741", "B008", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/main.py" = ["E402"]
+"tests/*" = ["E402"]

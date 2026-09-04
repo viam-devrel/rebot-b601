@@ -70,18 +70,16 @@ class _Joint:
         rpy = [float(v) for v in (origin.get("rpy") or "0 0 0").split()]
         self.origin = _transform(_rot_rpy(*rpy), xyz)
         axis_el = el.find("axis")
-        self.axis = (
-            [float(v) for v in axis_el.get("xyz").split()] if axis_el is not None else [0.0, 0.0, 1.0]
-        )
+        self.axis = [float(v) for v in axis_el.get("xyz").split()] if axis_el is not None else [0.0, 0.0, 1.0]
         limit = el.find("limit")
         self.lower = float(limit.get("lower")) if limit is not None else 0.0
         self.upper = float(limit.get("upper")) if limit is not None else 0.0
+        self.effort = float(limit.get("effort") or 0.0) if limit is not None else 0.0
 
 
 def load_chain(urdf_path=URDF_PATH):
     """Return the URDF joints ordered base -> end effector."""
     root = ET.parse(urdf_path).getroot()
-    joints = {j.get("name"): _Joint(j) for j in root.findall("joint")}
     children = {j.find("parent").get("link"): j for j in root.findall("joint")}
     parents = {j.find("child").get("link") for j in root.findall("joint")}
     all_parents = {j.find("parent").get("link") for j in root.findall("joint")}
@@ -97,6 +95,7 @@ def load_chain(urdf_path=URDF_PATH):
 _CHAIN = load_chain()
 REVOLUTE_JOINTS = [j for j in _CHAIN if j.type == "revolute"]
 JOINT_LIMITS_DEG = [(math.degrees(j.lower), math.degrees(j.upper)) for j in REVOLUTE_JOINTS]
+JOINT_EFFORT_NM = [j.effort for j in REVOLUTE_JOINTS]
 
 
 def forward_kinematics(joint_rads):
@@ -224,3 +223,128 @@ def end_position(joint_degs):
     (x, y, z), rot = forward_kinematics(rads)
     ox, oy, oz, theta = quat_to_orientation_vector(rotation_to_quat(rot))
     return (x * 1000.0, y * 1000.0, z * 1000.0, ox, oy, oz, math.degrees(theta))
+
+
+# --- per-link transforms, inertials, gravity, and Viam pose helpers ---
+
+GRAVITY_M_S2 = 9.80665
+
+
+class _LinkInertial:
+    def __init__(self, name, mass, com_xyz):
+        self.name = name
+        self.mass = mass
+        self.com = com_xyz
+
+
+def _load_links(urdf_path=URDF_PATH):
+    """Return the link names in chain order (base -> end) and their inertials."""
+    root = ET.parse(urdf_path).getroot()
+    joints = root.findall("joint")
+    child_of = {j.find("parent").get("link"): j.find("child").get("link") for j in joints}
+    parents = {j.find("parent").get("link") for j in joints}
+    children = {j.find("child").get("link") for j in joints}
+    base = (parents - children).pop()
+    order, link = [base], base
+    while link in child_of:
+        link = child_of[link]
+        order.append(link)
+    inertials = {}
+    for el in root.findall("link"):
+        inertial = el.find("inertial")
+        if inertial is None:
+            continue
+        mass_el = inertial.find("mass")
+        origin = inertial.find("origin")
+        xyz = [float(v) for v in (origin.get("xyz") if origin is not None else "0 0 0").split()]
+        inertials[el.get("name")] = _LinkInertial(el.get("name"), float(mass_el.get("value")), xyz)
+    return order, inertials
+
+
+LINK_ORDER, LINK_INERTIALS = _load_links()
+
+
+def link_transforms(joint_rads):
+    """4x4 transforms of every link frame (in chain order) in the base frame.
+
+    The first entry is the identity (base_link); the last is end_link.
+    """
+    t = _transform([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])
+    out = [t]
+    qi = 0
+    for joint in _CHAIN:
+        t = _mat_mul(t, joint.origin)
+        if joint.type == "revolute":
+            rot = _rot_axis_angle(joint.axis, joint_rads[qi])
+            t = _mat_mul(t, _transform(rot, [0, 0, 0]))
+            qi += 1
+        out.append(t)
+    return out
+
+
+def apply(t, p):
+    """Apply a 4x4 transform to a 3-vector point."""
+    return (
+        t[0][0] * p[0] + t[0][1] * p[1] + t[0][2] * p[2] + t[0][3],
+        t[1][0] * p[0] + t[1][1] * p[1] + t[1][2] * p[2] + t[1][3],
+        t[2][0] * p[0] + t[2][1] * p[1] + t[2][2] * p[2] + t[2][3],
+    )
+
+
+def rotate(t, v):
+    """Apply only the rotation part of a 4x4 transform to a 3-vector."""
+    return (
+        t[0][0] * v[0] + t[0][1] * v[1] + t[0][2] * v[2],
+        t[1][0] * v[0] + t[1][1] * v[1] + t[1][2] * v[2],
+        t[2][0] * v[0] + t[2][1] * v[1] + t[2][2] * v[2],
+    )
+
+
+def transform_to_viam_pose(t, scale_mm=1000.0):
+    """4x4 transform (meters) -> (x_mm, y_mm, z_mm, ox, oy, oz, theta_deg)."""
+    rot = [row[:3] for row in t[:3]]
+    ox, oy, oz, theta = quat_to_orientation_vector(rotation_to_quat(rot))
+    return (t[0][3] * scale_mm, t[1][3] * scale_mm, t[2][3] * scale_mm, ox, oy, oz, math.degrees(theta))
+
+
+def gravity_torques(joint_rads, gravity=(0.0, 0.0, -GRAVITY_M_S2), extra_payload_kg=0.0):
+    """Joint torques (Nm) that gravity exerts on each revolute joint, i.e. the
+    torque a motor must *counteract* is the negative of each value.
+
+    Uses the URDF link masses and centers of mass. ``gravity`` is the gravity
+    vector expressed in the base frame; change it for non-upright mounts.
+    ``extra_payload_kg`` is added at the end_link origin.
+    """
+    transforms = link_transforms(joint_rads)
+    # joint i sits at the origin of link i+1's frame; axis expressed in base frame
+    joint_frames, joint_axes = [], []
+    qi = 0
+    for idx, joint in enumerate(_CHAIN):
+        if joint.type == "revolute":
+            frame = transforms[idx + 1]
+            joint_frames.append((frame[0][3], frame[1][3], frame[2][3]))
+            joint_axes.append(rotate(frame, joint.axis))
+            qi += 1
+    torques = [0.0] * len(joint_frames)
+    masses = []
+    for idx, name in enumerate(LINK_ORDER):
+        inertial = LINK_INERTIALS.get(name)
+        if inertial is None:
+            continue
+        com_world = apply(transforms[idx], inertial.com)
+        masses.append((inertial.mass, com_world, idx))
+    if extra_payload_kg:
+        end = transforms[-1]
+        masses.append((extra_payload_kg, (end[0][3], end[1][3], end[2][3]), len(LINK_ORDER) - 1))
+    for mass, com, link_idx in masses:
+        force = (mass * gravity[0], mass * gravity[1], mass * gravity[2])
+        # every revolute joint upstream of this link feels the torque
+        qi = 0
+        for j_idx, joint in enumerate(_CHAIN):
+            if joint.type != "revolute":
+                continue
+            if j_idx + 1 <= link_idx:
+                r = (com[0] - joint_frames[qi][0], com[1] - joint_frames[qi][1], com[2] - joint_frames[qi][2])
+                torques[qi] += _dot(_cross(r, force), joint_axes[qi])
+            qi += 1
+    return torques

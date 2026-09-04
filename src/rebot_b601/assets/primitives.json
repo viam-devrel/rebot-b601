@@ -1,0 +1,493 @@
+{
+  "units": "m",
+  "frame": "URDF link frame (collision <origin> applied)",
+  "bbox_source": "original (undecimated) collision mesh",
+  "source_repo": "https://github.com/Seeed-Projects/reBot-DevArm",
+  "source_commit": "b0acdcfc47843de16a9f018c6ab1de1d31649fdc",
+  "source_subdir": "Rebot_Arm_description/DM",
+  "unit_scale_applied": 1.0,
+  "unit_note": "source meshes are in metres (largest extent 0.321 m, link2 longest extent 0.321 m)",
+  "links": {
+    "base_link": {
+      "urdf_link": "base_link",
+      "center": [
+        0.0,
+        0.0,
+        0.043825
+      ],
+      "size": [
+        0.14,
+        0.2,
+        0.08765
+      ]
+    },
+    "link1": {
+      "urdf_link": "link1",
+      "center": [
+        0.006683,
+        0.0,
+        0.04196
+      ],
+      "size": [
+        0.083765,
+        0.07725,
+        0.083919
+      ]
+    },
+    "link2": {
+      "urdf_link": "link2",
+      "center": [
+        -0.132,
+        0.0,
+        -0.031625
+      ],
+      "size": [
+        0.321,
+        0.057,
+        0.06735
+      ]
+    },
+    "link3": {
+      "urdf_link": "link3",
+      "center": [
+        0.12221,
+        -0.03,
+        -0.031125
+      ],
+      "size": [
+        0.29778,
+        0.105,
+        0.08025
+      ]
+    },
+    "link4": {
+      "urdf_link": "link4",
+      "center": [
+        0.044859,
+        -0.030043,
+        -0.03
+      ],
+      "size": [
+        0.145785,
+        0.115915,
+        0.06676
+      ]
+    },
+    "link5": {
+      "urdf_link": "link5",
+      "center": [
+        -0.002808,
+        0.0,
+        0.03552
+      ],
+      "size": [
+        0.07,
+        0.077,
+        0.08504
+      ]
+    },
+    "link6": {
+      "urdf_link": "link6",
+      "center": [
+        0.0,
+        0.0,
+        0.024184
+      ],
+      "size": [
+        0.077,
+        0.0636,
+        0.058
+      ]
+    },
+    "gripper_base": {
+      "urdf_link": "end_link",
+      "center": [
+        -0.089959,
+        0.0,
+        0.0
+      ],
+      "size": [
+        0.0335,
+        0.18407,
+        0.068466
+      ]
+    },
+    "left_finger": {
+      "urdf_link": "finger_left_link",
+      "center": [
+        -0.044305,
+        0.01365,
+        1.3e-05
+      ],
+      "size": [
+        0.088609,
+        0.089999,
+        0.039214
+      ]
+    },
+    "right_finger": {
+      "urdf_link": "finger_right_link",
+      "center": [
+        -0.044305,
+        -0.01365,
+        0.000149
+      ],
+      "size": [
+        0.088609,
+        0.089999,
+        0.039538
+      ]
+    }
+  },
+  "triangles": {
+    "base_link": {
+      "original": 81594,
+      "decimated": 3062
+    },
+    "link1": {
+      "original": 6742,
+      "decimated": 3062
+    },
+    "link2": {
+      "original": 101836,
+      "decimated": 3062
+    },
+    "link3": {
+      "original": 77100,
+      "decimated": 3062
+    },
+    "link4": {
+      "original": 57184,
+      "decimated": 3062
+    },
+    "link5": {
+      "original": 45182,
+      "decimated": 3062
+    },
+    "link6": {
+      "original": 39888,
+      "decimated": 3062
+    },
+    "gripper_base": {
+      "original": 11846,
+      "decimated": 3062
+    },
+    "left_finger": {
+      "original": 4770,
+      "decimated": 3062
+    },
+    "right_finger": {
+      "original": 4770,
+      "decimated": 3062
+    }
+  },
+  "decimation": {
+    "base_link": "quadric",
+    "link1": "quadric",
+    "link2": "quadric",
+    "link3": "quadric",
+    "link4": "quadric",
+    "link5": "quadric",
+    "link6": "quadric",
+    "gripper_base": "quadric",
+    "left_finger": "quadric",
+    "right_finger": "quadric"
+  },
+  "visual_models": {
+    "base_link": {
+      "faces_original": 81594,
+      "faces_decimated": 10967,
+      "methods": {
+        "colored_base_link_silver_trim": "quadric",
+        "colored_base_link_hardware_black": "quadric",
+        "colored_base_link_matte_black": "quadric"
+      },
+      "parts": {
+        "colored_base_link_silver_trim": {
+          "source": "meshes/visual/colored_base_link_silver_trim.stl",
+          "color": "#C0C0C0",
+          "urdf_material": "silver_trim"
+        },
+        "colored_base_link_hardware_black": {
+          "source": "meshes/visual/colored_base_link_hardware_black.stl",
+          "color": "#202020",
+          "urdf_material": "hardware_black"
+        },
+        "colored_base_link_matte_black": {
+          "source": "meshes/visual/colored_base_link_matte_black.stl",
+          "color": "#202020",
+          "urdf_material": "matte_black"
+        }
+      },
+      "bytes": 200036
+    },
+    "link1": {
+      "faces_original": 6742,
+      "faces_decimated": 6742,
+      "methods": {
+        "colored_link1_matte_black": "unchanged",
+        "colored_link1_hardware_black": "unchanged",
+        "colored_link1_anodized_grey": "unchanged"
+      },
+      "parts": {
+        "colored_link1_matte_black": {
+          "source": "meshes/visual/colored_link1_matte_black.stl",
+          "color": "#202020",
+          "urdf_material": "matte_black"
+        },
+        "colored_link1_hardware_black": {
+          "source": "meshes/visual/colored_link1_hardware_black.stl",
+          "color": "#202020",
+          "urdf_material": "hardware_black"
+        },
+        "colored_link1_anodized_grey": {
+          "source": "meshes/visual/colored_link1_anodized_grey.stl",
+          "color": "#8A8A8A",
+          "urdf_material": "anodized_grey"
+        }
+      },
+      "bytes": 123604
+    },
+    "link2": {
+      "faces_original": 101836,
+      "faces_decimated": 10960,
+      "methods": {
+        "colored_link2_seeed_yellow": "quadric",
+        "colored_link2_matte_black": "quadric",
+        "colored_link2_hardware_black": "quadric",
+        "colored_link2_anodized_grey": "quadric"
+      },
+      "parts": {
+        "colored_link2_seeed_yellow": {
+          "source": "meshes/visual/colored_link2_seeed_yellow.stl",
+          "color": "#F2C200",
+          "urdf_material": "seeed_yellow"
+        },
+        "colored_link2_matte_black": {
+          "source": "meshes/visual/colored_link2_matte_black.stl",
+          "color": "#202020",
+          "urdf_material": "matte_black"
+        },
+        "colored_link2_hardware_black": {
+          "source": "meshes/visual/colored_link2_hardware_black.stl",
+          "color": "#202020",
+          "urdf_material": "hardware_black"
+        },
+        "colored_link2_anodized_grey": {
+          "source": "meshes/visual/colored_link2_anodized_grey.stl",
+          "color": "#8A8A8A",
+          "urdf_material": "anodized_grey"
+        }
+      },
+      "bytes": 201004
+    },
+    "link3": {
+      "faces_original": 77100,
+      "faces_decimated": 10966,
+      "methods": {
+        "colored_link3_seeed_yellow": "quadric",
+        "colored_link3_matte_black": "quadric",
+        "colored_link3_hardware_black": "quadric",
+        "colored_link3_anodized_grey": "quadric"
+      },
+      "parts": {
+        "colored_link3_seeed_yellow": {
+          "source": "meshes/visual/colored_link3_seeed_yellow.stl",
+          "color": "#F2C200",
+          "urdf_material": "seeed_yellow"
+        },
+        "colored_link3_matte_black": {
+          "source": "meshes/visual/colored_link3_matte_black.stl",
+          "color": "#202020",
+          "urdf_material": "matte_black"
+        },
+        "colored_link3_hardware_black": {
+          "source": "meshes/visual/colored_link3_hardware_black.stl",
+          "color": "#202020",
+          "urdf_material": "hardware_black"
+        },
+        "colored_link3_anodized_grey": {
+          "source": "meshes/visual/colored_link3_anodized_grey.stl",
+          "color": "#8A8A8A",
+          "urdf_material": "anodized_grey"
+        }
+      },
+      "bytes": 201232
+    },
+    "link4": {
+      "faces_original": 57184,
+      "faces_decimated": 10970,
+      "methods": {
+        "colored_link4_seeed_yellow": "quadric",
+        "colored_link4_matte_black": "quadric",
+        "colored_link4_hardware_black": "quadric",
+        "colored_link4_anodized_grey": "quadric"
+      },
+      "parts": {
+        "colored_link4_seeed_yellow": {
+          "source": "meshes/visual/colored_link4_seeed_yellow.stl",
+          "color": "#F2C200",
+          "urdf_material": "matte_black"
+        },
+        "colored_link4_matte_black": {
+          "source": "meshes/visual/colored_link4_matte_black.stl",
+          "color": "#202020",
+          "urdf_material": "matte_black"
+        },
+        "colored_link4_hardware_black": {
+          "source": "meshes/visual/colored_link4_hardware_black.stl",
+          "color": "#202020",
+          "urdf_material": "hardware_black"
+        },
+        "colored_link4_anodized_grey": {
+          "source": "meshes/visual/colored_link4_anodized_grey.stl",
+          "color": "#8A8A8A",
+          "urdf_material": "anodized_grey"
+        }
+      },
+      "bytes": 200316
+    },
+    "link5": {
+      "faces_original": 45182,
+      "faces_decimated": 10966,
+      "methods": {
+        "colored_link5_matte_black": "quadric",
+        "colored_link5_hardware_black": "quadric",
+        "colored_link5_anodized_grey": "quadric"
+      },
+      "parts": {
+        "colored_link5_matte_black": {
+          "source": "meshes/visual/colored_link5_matte_black.stl",
+          "color": "#202020",
+          "urdf_material": "matte_black"
+        },
+        "colored_link5_hardware_black": {
+          "source": "meshes/visual/colored_link5_hardware_black.stl",
+          "color": "#202020",
+          "urdf_material": "hardware_black"
+        },
+        "colored_link5_anodized_grey": {
+          "source": "meshes/visual/colored_link5_anodized_grey.stl",
+          "color": "#8A8A8A",
+          "urdf_material": "anodized_grey"
+        }
+      },
+      "bytes": 199672
+    },
+    "link6": {
+      "faces_original": 39888,
+      "faces_decimated": 10970,
+      "methods": {
+        "colored_link6_matte_black": "quadric",
+        "colored_link6_hardware_black": "quadric"
+      },
+      "parts": {
+        "colored_link6_matte_black": {
+          "source": "meshes/visual/colored_link6_matte_black.stl",
+          "color": "#202020",
+          "urdf_material": "matte_black"
+        },
+        "colored_link6_hardware_black": {
+          "source": "meshes/visual/colored_link6_hardware_black.stl",
+          "color": "#202020",
+          "urdf_material": "hardware_black"
+        }
+      },
+      "bytes": 198840
+    },
+    "end_link": {
+      "faces_original": 11846,
+      "faces_decimated": 10968,
+      "methods": {
+        "colored_gripper_base_seeed_yellow": "quadric",
+        "colored_gripper_base_hardware_black": "quadric",
+        "colored_gripper_base_metal": "quadric"
+      },
+      "parts": {
+        "colored_gripper_base_seeed_yellow": {
+          "source": "meshes/visual/colored_gripper_base_seeed_yellow.stl",
+          "color": "#F2C200",
+          "urdf_material": "gripper_seeed_yellow"
+        },
+        "colored_gripper_base_hardware_black": {
+          "source": "meshes/visual/colored_gripper_base_hardware_black.stl",
+          "color": "#202020",
+          "urdf_material": "gripper_hardware_black"
+        },
+        "colored_gripper_base_metal": {
+          "source": "meshes/visual/colored_gripper_base_metal.stl",
+          "color": "#C0C0C0",
+          "urdf_material": "gripper_base_metal"
+        }
+      },
+      "bytes": 199328
+    },
+    "finger_left_link": {
+      "faces_original": 4770,
+      "faces_decimated": 4770,
+      "methods": {
+        "colored_left_finger_finger_black": "unchanged",
+        "colored_left_finger_carriage_grey": "unchanged",
+        "colored_left_finger_travel_stop_yellow": "unchanged",
+        "colored_left_finger_rack_metal": "unchanged"
+      },
+      "parts": {
+        "colored_left_finger_finger_black": {
+          "source": "meshes/visual/colored_left_finger_finger_black.stl",
+          "color": "#202020",
+          "urdf_material": "gripper_finger_black"
+        },
+        "colored_left_finger_carriage_grey": {
+          "source": "meshes/shared/colored_left_finger_carriage_grey.stl",
+          "color": "#8A8A8A",
+          "urdf_material": "gripper_carriage_grey"
+        },
+        "colored_left_finger_travel_stop_yellow": {
+          "source": "meshes/shared/colored_left_finger_travel_stop_yellow.stl",
+          "color": "#F2C200",
+          "urdf_material": "gripper_seeed_yellow"
+        },
+        "colored_left_finger_rack_metal": {
+          "source": "meshes/visual/colored_left_finger_rack_metal.stl",
+          "color": "#C0C0C0",
+          "urdf_material": "gripper_rack_metal"
+        }
+      },
+      "bytes": 90044
+    },
+    "finger_right_link": {
+      "faces_original": 4770,
+      "faces_decimated": 4770,
+      "methods": {
+        "colored_right_finger_finger_black": "unchanged",
+        "colored_right_finger_carriage_grey": "unchanged",
+        "colored_right_finger_travel_stop_yellow": "unchanged",
+        "colored_right_finger_rack_metal": "unchanged"
+      },
+      "parts": {
+        "colored_right_finger_finger_black": {
+          "source": "meshes/visual/colored_right_finger_finger_black.stl",
+          "color": "#202020",
+          "urdf_material": "gripper_finger_black"
+        },
+        "colored_right_finger_carriage_grey": {
+          "source": "meshes/shared/colored_right_finger_carriage_grey.stl",
+          "color": "#8A8A8A",
+          "urdf_material": "gripper_carriage_grey"
+        },
+        "colored_right_finger_travel_stop_yellow": {
+          "source": "meshes/shared/colored_right_finger_travel_stop_yellow.stl",
+          "color": "#F2C200",
+          "urdf_material": "gripper_seeed_yellow"
+        },
+        "colored_right_finger_rack_metal": {
+          "source": "meshes/visual/colored_right_finger_rack_metal.stl",
+          "color": "#C0C0C0",
+          "urdf_material": "gripper_rack_metal"
+        }
+      },
+      "bytes": 90072
+    }
+  },
+  "skipped_visual_meshes": []
+}

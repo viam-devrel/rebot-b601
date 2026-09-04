@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 module.tar.gz
+.pytest_cache/
+.ruff_cache/

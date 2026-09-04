@@ -57,7 +57,6 @@ def mat_close(a, b, tol=1e-6):
 
 
 def test_ov_round_trip():
-    cases = [(0.0, 0.0, 1.0)]  # identity-ish pole case first
     for _ in range(500):
         axis = [random.uniform(-1, 1) for _ in range(3)]
         if all(abs(a) < 1e-3 for a in axis):

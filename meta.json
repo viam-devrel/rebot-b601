@@ -3,17 +3,19 @@
   "module_id": "devrel:rebot-b601",
   "visibility": "public",
   "url": "https://github.com/viam-devrel/rebot-b601",
-  "description": "Control the Seeed Studio reBot Arm B601-DM robotic arm.",
+  "description": "Control the Seeed Studio reBot Arm B601-DM: 6-DoF Damiao CAN arm and parallel gripper, with motion-service support, collision geometry, and 3D models.",
   "models": [
     {
       "api": "rdk:component:arm",
       "model": "devrel:rebot-b601:arm",
-      "short_description": "Control the 6 Damiao CAN joints of the reBot Arm B601-DM over its USB-CAN serial bridge"
+      "short_description": "6-DoF reBot B601-DM arm over its USB-CAN bridge: streamed trajectories, motion-service moves, collision geometry, fault decoding",
+      "markdown_link": "README.md#arm-attributes"
     },
     {
       "api": "rdk:component:gripper",
       "model": "devrel:rebot-b601:gripper",
-      "short_description": "Control the B601-DM parallel gripper with force-capped grab and hold detection"
+      "short_description": "B601-DM parallel gripper with force-capped grab, hold detection, and kinematics for the frame system",
+      "markdown_link": "README.md#gripper-attributes"
     }
   ],
   "markdown_link": "README.md",

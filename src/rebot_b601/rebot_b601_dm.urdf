@@ -1,9 +1,17 @@
 <?xml version='1.0' encoding='utf-8'?>
 <robot name="rebot_b601_dm">
   <link name="base_link">
-    </link>
+    <inertial>
+      <origin xyz="-7.849E-06 -1.1531E-06 0.029841" rpy="0 0 0" />
+      <mass value="0.8366" />
+    </inertial>
+  </link>
   <link name="link1">
-    </link>
+    <inertial>
+      <origin xyz="0.000113614552951627 -0.000616319527051323 0.0236476372671394" rpy="0 0 0" />
+      <mass value="0.1613" />
+    </inertial>
+  </link>
   <joint name="joint1" type="revolute">
     <origin xyz="-8.416E-05 0 0.08465" rpy="0 0 0" />
     <parent link="base_link" />
@@ -12,7 +20,11 @@
     <limit lower="-2.8" upper="2.8" effort="27" velocity="50" />
   </joint>
   <link name="link2">
-    </link>
+    <inertial>
+      <origin xyz="-0.13225622308888 -0.0030617036386309 -0.0308306967030205" rpy="0 0 0" />
+      <mass value="1.3266" />
+    </inertial>
+  </link>
   <joint name="joint2" type="revolute">
     <origin xyz="0.020084 0.031625 0.05555" rpy="-1.5708 0 0" />
     <parent link="link1" />
@@ -21,7 +33,11 @@
     <limit lower="-3.14" upper="0" effort="27" velocity="50" />
   </joint>
   <link name="link3">
-    </link>
+    <inertial>
+      <origin xyz="0.121040035791843 -0.0536211076627949 -0.0310137854608077" rpy="0 0 0" />
+      <mass value="0.8353" />
+    </inertial>
+  </link>
   <joint name="joint3" type="revolute">
     <origin xyz="-0.264 0 0" rpy="0 0 0" />
     <parent link="link2" />
@@ -30,7 +46,11 @@
     <limit lower="-3.14" upper="0" effort="27" velocity="50" />
   </joint>
   <link name="link4">
-    </link>
+    <inertial>
+      <origin xyz="0.0608200956293136 -0.0511711906613122 -0.030299458623927" rpy="0 0 0" />
+      <mass value="0.52" />
+    </inertial>
+  </link>
   <joint name="joint4" type="revolute">
     <origin xyz="0.2426 -0.054 -0.001625" rpy="0 0 0" />
     <parent link="link3" />
@@ -39,7 +59,11 @@
     <limit lower="-1.87" upper="1.57" effort="7" velocity="200" />
   </joint>
   <link name="link5">
-    </link>
+    <inertial>
+      <origin xyz="-0.00502802058982517 1.73866206692364E-06 0.0386233236326755" rpy="0 0 0" />
+      <mass value="0.383" />
+    </inertial>
+  </link>
   <joint name="joint5" type="revolute">
     <origin xyz="0.078308 -0.0375 -0.03" rpy="-1.5708 0 0" />
     <parent link="link4" />
@@ -48,7 +72,11 @@
     <limit lower="-1.57" upper="1.57" effort="7" velocity="200" />
   </joint>
   <link name="link6">
-    </link>
+    <inertial>
+      <origin xyz="3.76418727127126E-06 -0.000100908819946677 0.0253308606425965" rpy="0 0 0" />
+      <mass value="0.3663" />
+    </inertial>
+  </link>
   <joint name="joint6" type="revolute">
     <origin xyz="0.028008 0 0.04" rpy="0 1.5708 0" />
     <parent link="link5" />
@@ -57,7 +85,11 @@
     <limit lower="-3.14" upper="3.14" effort="7" velocity="200" />
   </joint>
   <link name="end_link">
-    </link>
+    <inertial>
+      <origin xyz="-0.0737654295815033 -9.5080995865868E-06 7.04327840286845E-06" rpy="0 0 0" />
+      <mass value="0.5" />
+    </inertial>
+  </link>
   <joint name="end_joint" type="fixed">
     <origin xyz="0 0 0.15539" rpy="0 -1.5708 3.1415" />
     <parent link="link6" />
