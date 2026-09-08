@@ -27,13 +27,18 @@ for i, cid in enumerate(range(1, 8)):
     if s is None:
         print(f"  {names[i]} (0x{cid:02x}): NO FEEDBACK")
     else:
-        print(f"  {names[i]} (0x{cid:02x}): pos={math.degrees(s.pos):8.2f} deg  vel={s.vel:6.3f} rad/s  torq={s.torq:6.3f} Nm  t_mos={s.t_mos:.0f}C")
+        print(
+            f"  {names[i]} (0x{cid:02x}): pos={math.degrees(s.pos):8.2f} deg  vel={s.vel:6.3f} rad/s  "
+            f"torq={s.torq:6.3f} Nm  t_mos={s.t_mos:.0f}C"
+        )
         if i < 6:
             positions.append(math.degrees(s.pos))
 
 if len(positions) == 6:
     x, y, z, ox, oy, oz, theta = spatial.end_position(positions)
-    print(f"\nend effector (FK): x={x:.1f} y={y:.1f} z={z:.1f} mm  o=({ox:.3f},{oy:.3f},{oz:.3f}) theta={theta:.1f} deg")
+    print(
+        f"\nend effector (FK): x={x:.1f} y={y:.1f} z={z:.1f} mm  o=({ox:.3f},{oy:.3f},{oz:.3f}) theta={theta:.1f} deg"
+    )
 
 bus.release()
 print("done (torque untouched)")
