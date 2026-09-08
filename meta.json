@@ -8,13 +8,13 @@
     {
       "api": "rdk:component:arm",
       "model": "devrel:rebot-b601:arm",
-      "short_description": "6-DoF reBot B601-DM arm over its USB-CAN bridge: streamed trajectories, motion-service moves, collision geometry, fault decoding",
+      "short_description": "6-DoF reBot B601-DM arm: streamed trajectories, motion-service moves, collision geometry",
       "markdown_link": "README.md#arm-attributes"
     },
     {
       "api": "rdk:component:gripper",
       "model": "devrel:rebot-b601:gripper",
-      "short_description": "B601-DM parallel gripper with force-capped grab, hold detection, and kinematics for the frame system",
+      "short_description": "B601-DM parallel gripper with force-capped grab, hold detection, and frame kinematics",
       "markdown_link": "README.md#gripper-attributes"
     }
   ],
