@@ -16,8 +16,14 @@
       "model": "devrel:rebot-b601:gripper",
       "short_description": "B601-DM parallel gripper with force-capped grab, hold detection, and frame kinematics",
       "markdown_link": "README.md#gripper-attributes"
+    },
+    {
+      "api": "rdk:service:discovery",
+      "model": "devrel:rebot-b601:discovery",
+      "short_description": "Finds attached B601 USB-CAN boards by USB id and proposes arm + gripper configs",
+      "markdown_link": "README.md#discovery"
     }
   ],
   "markdown_link": "README.md",
   "entrypoint": "run.sh"
-}
+}\n

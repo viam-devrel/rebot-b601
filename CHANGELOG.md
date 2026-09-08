@@ -2,7 +2,21 @@
 
 ## 0.3.0 (2026-09-08)
 
+### Added
+- `devrel:rebot-b601:discovery` service: finds every attached B601 by USB id (`2e88:4603`) from sysfs and
+  proposes arm + gripper configs with the stable by-id `port` filled in. `{"serial_ports": true}` lists
+  all USB serial devices with their identity.
+
+### Changed
+- Port auto-detection identifies the board by USB vendor/product id and no longer falls back to
+  `/dev/ttyACM0`. With no board attached the component fails with a clear message instead of opening
+  whatever device happens to be first.
+- A motor that does not answer (`... not received within ...`) is reported as a motor fault; it no
+  longer closes and reopens the serial port, which is how the port was lost to another driver.
+
 ### Fixed
+- `SharedBus.acquire` reopens a bus that a failed reconnect left closed instead of returning a dead bus
+  that fails every call with "is not open".
 - The serial bridge could be locked out by the module's own process: `SharedBus` now caches by the
   resolved device path (so `/dev/ttyACM0` and its by-id symlink share one controller), a failed
   component build releases the port instead of pinning it, and every controller has a finalizer

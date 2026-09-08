@@ -13,7 +13,8 @@ Both components share one serial connection; the module multiplexes them onto th
 
 ## Prerequisites
 
-- The arm's USB-CAN board plugged into the machine (enumerates as an `HDSC CDC Device`, typically `/dev/ttyACM0`).
+- The arm's USB-CAN board plugged into the machine. It enumerates as an `HDSC CDC Device` (USB `2e88:4603`) and is
+  found by that identity, never by guessing a `/dev/ttyACM*` number.
 - Serial-port access for the viam-server user: `sudo usermod -aG dialout $USER` (then re-login), or a udev rule.
 - The arm **zeroed** (see Calibration below). Joint angles are relative to the motors' stored zero position.
 - `uv` or `python3 -m venv` on the machine; `run.sh` bootstraps a virtualenv on first start.
@@ -181,6 +182,24 @@ Joint angles are relative to each motor's stored zero. To (re)zero:
 
 If you already calibrated via Seeed's LeRobot flow, the zeros are stored in the motors and nothing more is needed.
 
+## Discovery
+
+Add the `devrel:rebot-b601:discovery` service (no attributes) and open its **Test** panel: it lists a
+ready-to-paste arm and gripper config for every attached B601, with `port` set to the board's stable
+`/dev/serial/by-id/...` path. Discovery identifies boards by USB vendor/product id from sysfs and never
+opens a serial port, so it is safe to run next to other serial devices.
+
+```json
+{ "name": "rebot-discovery", "api": "rdk:service:discovery", "model": "devrel:rebot-b601:discovery" }
+```
+
+`{"serial_ports": true}` via DoCommand lists every USB serial device on the machine with its USB id,
+which is the quickest way to see who owns which `/dev/ttyACM*`.
+
+Leaving `port` unset on the arm is fine: it resolves to the B601 the same way. If no board is
+attached the component fails with `no B601 USB-CAN board found` and the list of serial devices that
+are present, rather than opening something else.
+
 ## Troubleshooting
 
 **`Unable to acquire exclusive lock on serial port`** means the USB-CAN board is present but another
@@ -194,6 +213,10 @@ open file descriptor holds it. The error names the holder when it can be seen fr
 
 Both the arm and the gripper resolve `port` to the real device before opening it, so
 `/dev/ttyACM0` and its `/dev/serial/by-id/...` symlink share one connection.
+
+**`motor did not reply (... not received within 100ms)`** means the serial link is fine but a motor
+stayed silent: check arm power and the CAN daisy chain. The module no longer reopens the port for this,
+since another driver probing the same tty can produce exactly this symptom.
 
 ## Development
 

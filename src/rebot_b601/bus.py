@@ -26,6 +26,7 @@ import os
 import threading
 import time
 import weakref
+from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from motorbridge import Controller
@@ -63,12 +64,97 @@ class BusError(RuntimeError):
     """The serial bridge is unavailable (unplugged, powered off, or busy)."""
 
 
+# The B601's USB-CAN bridge enumerates as an "HDSC CDC Device".
+B601_USB_VID = "2e88"
+B601_USB_PID = "4603"
+
+
+@dataclass(frozen=True)
+class UsbSerialPort:
+    """A USB serial device as the kernel identifies it, without opening it."""
+
+    device: str  # /dev/ttyACM0
+    vid: str  # lowercase hex, e.g. "2e88"
+    pid: str
+    serial: str
+    product: str
+    by_id: Optional[str]  # stable /dev/serial/by-id/... symlink, if udev made one
+
+    @property
+    def path(self) -> str:
+        return self.by_id or self.device
+
+
+def _sysfs_attr(usb_dir: str, name: str) -> Optional[str]:
+    try:
+        with open(os.path.join(usb_dir, name)) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def _by_id_link(device: str) -> Optional[str]:
+    for link in sorted(glob.glob("/dev/serial/by-id/*")):
+        if os.path.realpath(link) == device:
+            return link
+    return None
+
+
+def usb_serial_ports() -> List[UsbSerialPort]:
+    """Enumerate USB serial ttys with their USB identity (Linux sysfs; empty elsewhere).
+
+    Identification never opens a port, so it cannot disturb a device that another
+    driver is talking to.
+    """
+    ports: List[UsbSerialPort] = []
+    for tty in sorted(glob.glob("/sys/class/tty/ttyACM*") + glob.glob("/sys/class/tty/ttyUSB*")):
+        # ttyACM: <usb device>/<interface>/ttyACMn ; ttyUSB: <usb device>/<interface>/ttyUSBn/ttyUSBn
+        usb_dir = os.path.realpath(os.path.join(tty, "device", ".."))
+        vid = _sysfs_attr(usb_dir, "idVendor")
+        if vid is None:
+            usb_dir = os.path.realpath(os.path.join(usb_dir, ".."))
+            vid = _sysfs_attr(usb_dir, "idVendor")
+        if vid is None:
+            continue
+        device = "/dev/" + os.path.basename(tty)
+        ports.append(
+            UsbSerialPort(
+                device=device,
+                vid=vid.lower(),
+                pid=(_sysfs_attr(usb_dir, "idProduct") or "").lower(),
+                serial=_sysfs_attr(usb_dir, "serial") or "",
+                product=_sysfs_attr(usb_dir, "product") or "",
+                by_id=_by_id_link(device),
+            )
+        )
+    return ports
+
+
+def find_b601_ports() -> List[UsbSerialPort]:
+    """Every attached B601 USB-CAN bridge, identified by USB vendor/product id."""
+    return [p for p in usb_serial_ports() if (p.vid, p.pid) == (B601_USB_VID, B601_USB_PID)]
+
+
 def detect_port() -> str:
-    """Find the B601's USB-CAN bridge (enumerates as an 'HDSC CDC Device')."""
+    """Find the B601's USB-CAN bridge without opening anything.
+
+    Only a device the kernel identifies as the HDSC bridge is ever returned.
+    There is deliberately no "/dev/ttyACM0" fallback: guessing a port means
+    opening someone else's device (a haptic controller, a GPS, ...) and
+    stealing its bytes. Raises BusError when no bridge is present.
+    """
+    boards = find_b601_ports()
+    if boards:
+        return boards[0].path
+    # No sysfs (macOS, containers): fall back to udev's descriptive symlink name.
     matches = sorted(glob.glob("/dev/serial/by-id/usb-HDSC_CDC_Device_*"))
     if matches:
         return matches[0]
-    return "/dev/ttyACM0"
+    present = ", ".join(f"{p.device} ({p.vid}:{p.pid} {p.product or '?'})" for p in usb_serial_ports()) or "none"
+    raise BusError(
+        f"no B601 USB-CAN board found (HDSC CDC Device, USB {B601_USB_VID}:{B601_USB_PID}); "
+        f"USB serial devices present: {present}. Check the cable, or set 'port' explicitly."
+    )
 
 
 def canonical_device(port: str) -> str:
@@ -89,6 +175,18 @@ def _quiet_close(controller) -> None:
 
 
 _LOCK_HINTS = ("lock", "busy")
+
+# motorbridge reports a motor that did not answer as a CallError, the same type
+# it uses for a dead serial link. Reopening the port is the wrong response to a
+# silent motor (it is what lost the port to another driver in the field), so
+# these are told apart by message.
+_MOTOR_TIMEOUT_HINTS = ("not received within", "no feedback", "no reply", "did not respond", "no response")
+
+
+def is_motor_timeout(exc: BaseException) -> bool:
+    """True when a link-class error is really a motor failing to answer."""
+    text = str(exc).lower()
+    return any(h in text for h in _MOTOR_TIMEOUT_HINTS)
 
 
 def _release_leaked_fd(fd: int) -> None:
@@ -258,6 +356,12 @@ class SharedBus:
                 cls._instances[device] = bus
             elif bus.baud != baud:
                 raise BusError(f"{port} is already open at {bus.baud} baud; cannot reopen it at {baud}")
+            elif bus.controller is None:
+                # A previous reconnect gave up and left the bus closed while
+                # someone still held a reference. Reopen rather than hand back
+                # a dead bus, which would fail every call with "is not open".
+                with bus.lock:
+                    bus._open()
             bus._refcount += 1
             return bus
 

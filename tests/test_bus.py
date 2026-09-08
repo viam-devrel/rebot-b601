@@ -130,3 +130,80 @@ def test_non_lock_open_failure_is_reported_plainly(factory):
     with pytest.raises(BusError, match="cannot open /dev/fake0") as info:
         SharedBus.acquire("/dev/fake0")
     assert "held by" not in str(info.value)
+
+
+# ---------------------------------------------------------------- discovery
+
+HDSC = bus_mod.UsbSerialPort(
+    device="/dev/ttyACM1",
+    vid="2e88",
+    pid="4603",
+    serial="00000000050C",
+    product="HDSC CDC Device",
+    by_id="/dev/serial/by-id/usb-HDSC_CDC_Device_00000000050C-if00",
+)
+TEENSY = bus_mod.UsbSerialPort(
+    device="/dev/ttyACM0", vid="16c0", pid="0483", serial="1124", product="USB Serial", by_id=None
+)
+
+
+def test_detect_port_picks_the_b601_by_usb_identity_not_enumeration_order(monkeypatch):
+    monkeypatch.setattr(bus_mod, "usb_serial_ports", lambda: [TEENSY, HDSC])
+    assert bus_mod.detect_port() == HDSC.by_id
+
+
+def test_detect_port_refuses_to_guess_when_no_b601_is_attached(monkeypatch):
+    monkeypatch.setattr(bus_mod, "usb_serial_ports", lambda: [TEENSY])
+    monkeypatch.setattr(bus_mod.glob, "glob", lambda pattern: [])
+    with pytest.raises(BusError) as info:
+        bus_mod.detect_port()
+    msg = str(info.value)
+    assert "no B601 USB-CAN board found" in msg and "/dev/ttyACM0 (16c0:0483" in msg
+
+
+def test_acquire_reopens_a_bus_left_closed_by_a_failed_reconnect(factory):
+    bus = SharedBus.acquire("/dev/fake0")
+    bus._close_controller()  # what reconnect() leaves behind when every attempt fails
+    again = SharedBus.acquire("/dev/fake0")
+    assert again is bus and bus.controller is factory.latest and len(factory.controllers) == 2
+    bus.release()
+    bus.release()
+    assert SharedBus._instances == {}
+
+
+def test_motor_timeout_is_not_treated_as_a_dead_link(factory, monkeypatch):
+    from tests.fake_bus import FakeMotor
+
+    def silent(self):
+        raise CallError("ensure_mode failed: register 10 not received within 100ms")
+
+    monkeypatch.setattr(FakeMotor, "enable", silent)
+    with pytest.raises(BusError, match="motor did not reply"):
+        B601Arm.new(make_config("arm", port="/dev/fake0"), {})
+    assert len(factory.controllers) == 1  # no close-and-reopen of the port
+    assert SharedBus._instances == {}  # and the failed build released it
+
+
+async def test_discovery_emits_arm_and_gripper_configs_per_board(monkeypatch):
+    from src.rebot_b601.discovery import B601Discovery
+
+    second = bus_mod.UsbSerialPort("/dev/ttyACM2", "2e88", "4603", "0000000007AB", "HDSC CDC Device", None)
+    monkeypatch.setattr(bus_mod, "usb_serial_ports", lambda: [TEENSY, HDSC, second])
+    disc = B601Discovery("disc")
+    configs = await disc.discover_resources()
+    assert [c.name for c in configs] == ["rebot-arm", "rebot-gripper", "rebot-arm-2", "rebot-gripper-2"]
+    arm, gripper, arm2, _ = configs
+    assert arm.model == "devrel:rebot-b601:arm" and arm.attributes["port"] == HDSC.by_id
+    assert arm.frame.parent == "world"
+    assert gripper.attributes["arm"] == "rebot-arm" and list(gripper.depends_on) == ["rebot-arm"]
+    assert gripper.frame.parent == "rebot-arm"
+    assert arm2.attributes["port"] == "/dev/ttyACM2"  # no by-id link: fall back to the device node
+    listing = await disc.do_command({"serial_ports": True})
+    assert [p["b601"] for p in listing["serial_ports"]] == [False, True, True]
+
+
+async def test_discovery_with_no_boards_is_empty_not_an_error(monkeypatch):
+    from src.rebot_b601.discovery import B601Discovery
+
+    monkeypatch.setattr(bus_mod, "usb_serial_ports", lambda: [TEENSY])
+    assert await B601Discovery("disc").discover_resources() == []

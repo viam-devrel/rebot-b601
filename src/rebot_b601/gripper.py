@@ -26,7 +26,7 @@ from viam.resource.easy_resource import EasyResource
 from viam.utils import struct_to_dict
 
 from . import kinematics
-from .bus import DEFAULT_BAUD, LINK_ERRORS, BusError, SharedBus, detect_port
+from .bus import DEFAULT_BAUD, LINK_ERRORS, BusError, SharedBus, detect_port, is_motor_timeout
 from .damiao import JointHealth, MotorFault
 from .ops import SingleOperationManager
 
@@ -140,6 +140,10 @@ class B601Gripper(Gripper, EasyResource):
         except BusError:
             raise
         except LINK_ERRORS as exc:
+            if is_motor_timeout(exc):
+                # The link is fine; a motor stayed silent. Do not reopen the
+                # port for this: check power and CAN wiring instead.
+                raise BusError(f"motor did not reply ({exc}); check arm power and CAN wiring") from exc
             if not self.reconnect_enabled or self.bus is None:
                 raise BusError(f"serial bridge error: {exc}") from exc
             LOGGER.warning("serial bridge error (%s); reconnecting", exc)

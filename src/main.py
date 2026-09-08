@@ -10,6 +10,7 @@ arm_service.install()
 
 # Importing the models registers them (EasyResource).
 from .rebot_b601.arm import B601Arm  # noqa: E402,F401
+from .rebot_b601.discovery import B601Discovery  # noqa: E402,F401
 from .rebot_b601.gripper import B601Gripper  # noqa: E402,F401
 
 if __name__ == "__main__":
