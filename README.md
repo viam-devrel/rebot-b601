@@ -181,6 +181,20 @@ Joint angles are relative to each motor's stored zero. To (re)zero:
 
 If you already calibrated via Seeed's LeRobot flow, the zeros are stored in the motors and nothing more is needed.
 
+## Troubleshooting
+
+**`Unable to acquire exclusive lock on serial port`** means the USB-CAN board is present but another
+open file descriptor holds it. The error names the holder when it can be seen from `/proc`:
+
+- *held by this module process itself*: a previous controller leaked its descriptor. The module
+  closes it and retries automatically; if it still fails, restart the module (`sudo systemctl
+  restart viam-server`).
+- *held by pid N (...)*: another program has the port (a LeRobot or motorbridge session, a stale
+  hot-reloaded module, a second viam-server). Stop it, or `sudo fuser -v /dev/ttyACM*` to find it.
+
+Both the arm and the gripper resolve `port` to the real device before opening it, so
+`/dev/ttyACM0` and its `/dev/serial/by-id/...` symlink share one connection.
+
 ## Development
 
 ```sh
@@ -192,7 +206,8 @@ make check-bootstrap # run.sh on a clean copy, as viam-server would
 .venv/bin/python tests/smoke_hardware.py   # read-only hardware check
 ```
 
-Tags matching `v*` publish to the registry through `.github/workflows/deploy.yml`.
+Creating a GitHub release (tag `0.3.0` or `v0.3.0`) publishes to the registry through
+`.github/workflows/deploy.yml`; the workflow can also be run by hand with a version input.
 
 ## Comparison with the uFactory xArm module
 

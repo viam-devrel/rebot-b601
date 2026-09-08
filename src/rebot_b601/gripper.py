@@ -70,8 +70,20 @@ class B601Gripper(Gripper, EasyResource):
     def new(cls, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
         # EasyResource's default new() does not call reconfigure; see B601Arm.
         self = cls(config.name)
-        self.reconfigure(config, dependencies)
+        try:
+            self.reconfigure(config, dependencies)
+        except Exception:
+            # A failed build must not pin the serial port: viam-server will
+            # retry with a fresh instance, which needs to open it again.
+            self._release_bus()
+            raise
         return self
+
+    def _release_bus(self):
+        bus, self.bus = self.bus, None
+        if bus is not None:
+            bus.remove_reconnect_callback(self._on_bus_reconnect)
+            bus.release()
 
     @classmethod
     def validate_config(cls, config: ComponentConfig) -> Tuple[Sequence[str], Sequence[str]]:
@@ -111,10 +123,8 @@ class B601Gripper(Gripper, EasyResource):
         self.collision_mode = attrs.get("collision_geometry", "primitives")
         self.reconnect_enabled = bool(attrs.get("reconnect", True))
 
-        if self.bus is not None and (self.bus.port != port or self.bus.baud != baud):
-            self.bus.remove_reconnect_callback(self._on_bus_reconnect)
-            self.bus.release()
-            self.bus = None
+        if self.bus is not None and not self.bus.matches(port, baud):
+            self._release_bus()
         if self.bus is None:
             self.bus = SharedBus.acquire(port, baud)
             self.bus.on_reconnect(self._on_bus_reconnect)
@@ -371,8 +381,6 @@ class B601Gripper(Gripper, EasyResource):
 
             def _shutdown():
                 self.ops.cancel_current()
-                self.bus.remove_reconnect_callback(self._on_bus_reconnect)
-                self.bus.release()
+                self._release_bus()
 
             await asyncio.to_thread(_shutdown)
-            self.bus = None

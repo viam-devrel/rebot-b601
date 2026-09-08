@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- The serial bridge could be locked out by the module's own process: `SharedBus` now caches by the
+  resolved device path (so `/dev/ttyACM0` and its by-id symlink share one controller), a failed
+  component build releases the port instead of pinning it, and every controller has a finalizer
+  so a dropped bus still closes its descriptor.
+- A refused exclusive lock now reports who holds the port (this process, or pid + command line of
+  another). A descriptor leaked by this process is closed and the open retried once.
+- Asking for a second baud rate on an already-open device is an error instead of being ignored.
+
 ## 0.2.0 (2026-09-08)
 
 Feature parity pass against the `viam:ufactory` xArm module; see PLAN.md for the gap analysis.

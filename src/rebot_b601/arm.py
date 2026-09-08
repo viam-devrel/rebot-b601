@@ -91,8 +91,20 @@ class B601Arm(Arm, EasyResource):
         # viam-server only calls Reconfigure on config changes, so the bus
         # must be opened here.
         self = cls(config.name)
-        self.reconfigure(config, dependencies)
+        try:
+            self.reconfigure(config, dependencies)
+        except Exception:
+            # A failed build must not pin the serial port: viam-server will
+            # retry with a fresh instance, which needs to open it again.
+            self._release_bus()
+            raise
         return self
+
+    def _release_bus(self):
+        bus, self.bus = self.bus, None
+        if bus is not None:
+            bus.remove_reconnect_callback(self._on_bus_reconnect)
+            bus.release()
 
     @classmethod
     def validate_config(cls, config: ComponentConfig) -> Tuple[Sequence[str], Sequence[str]]:
@@ -171,10 +183,8 @@ class B601Arm(Arm, EasyResource):
             self.motion = dep  # type: ignore[assignment]
 
         self._exit_manual_mode_sync(restore=False)
-        if self.bus is not None and (self.bus.port != port or self.bus.baud != baud):
-            self.bus.remove_reconnect_callback(self._on_bus_reconnect)
-            self.bus.release()
-            self.bus = None
+        if self.bus is not None and not self.bus.matches(port, baud):
+            self._release_bus()
         if self.bus is None:
             self.bus = SharedBus.acquire(port, baud)
             self.bus.on_reconnect(self._on_bus_reconnect)
@@ -740,11 +750,9 @@ class B601Arm(Arm, EasyResource):
                         self._disable_motors()
                     except Exception:
                         LOGGER.warning("failed to disable arm motors on close", exc_info=True)
-                self.bus.remove_reconnect_callback(self._on_bus_reconnect)
-                self.bus.release()
+                self._release_bus()
 
             await asyncio.to_thread(_shutdown)
-            self.bus = None
 
 
 class StreamedMove:
