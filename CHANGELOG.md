@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-09-08)
 
 ### Fixed
 - The serial bridge could be locked out by the module's own process: `SharedBus` now caches by the
