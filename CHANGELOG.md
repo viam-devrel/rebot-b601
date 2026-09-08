@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-09-08)
 
 Feature parity pass against the `viam:ufactory` xArm module; see PLAN.md for the gap analysis.
 
