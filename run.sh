@@ -7,7 +7,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 VENV=".venv"
-if [ ! -x "$VENV/bin/python" ]; then
+STAMP="$VENV/.deps-installed"
+# The install only counts once the stamp exists: a process killed mid-install
+# (viam-server restart racing a version upgrade) otherwise leaves a venv with a
+# python but no packages, and every later start dies on import.
+if [ ! -f "$STAMP" ] || [ requirements.txt -nt "$STAMP" ]; then
+    rm -rf "$VENV"
     if command -v uv >/dev/null 2>&1; then
         uv venv "$VENV"
         uv pip install -p "$VENV/bin/python" -r requirements.txt
@@ -15,6 +20,7 @@ if [ ! -x "$VENV/bin/python" ]; then
         python3 -m venv "$VENV"
         "$VENV/bin/pip" install -r requirements.txt
     fi
+    touch "$STAMP"
 fi
 
 if [ "${1:-}" = "--check" ]; then
