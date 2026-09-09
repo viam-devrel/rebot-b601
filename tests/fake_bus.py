@@ -40,8 +40,12 @@ class FakeMotor:
         self._last_update = time.monotonic()
         self._requested = False
         self.mode_failures = 0  # ensure_mode raises this many times first
+        self.closed = False  # motorbridge.Motor.close() was called (frees the handle's bus reference)
 
     # --- motorbridge.Motor API ---
+    def close(self):
+        self.closed = True
+
     def enable(self):
         self.controller._check_link()
         self.enabled = True

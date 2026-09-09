@@ -1,6 +1,6 @@
 [project]
 name = "viam-rebot-b601"
-version = "0.3.0"
+version = "0.3.1"
 description = "Viam module for the Seeed Studio reBot Arm B601-DM"
 requires-python = ">=3.10"
 

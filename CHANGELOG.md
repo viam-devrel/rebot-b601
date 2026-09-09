@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 (2026-09-09)
+
+### Fixed
+- The real cause of the serial-port lock-out: every motorbridge `Motor` handle holds its own reference
+  to the serial bus, so `Controller.close()` alone left the port open and `Motor` has no destructor.
+  `SharedBus` now frees every motor handle before closing the controller, on release, reconnect, and
+  garbage collection. Verified against the real library.
+
 ## 0.3.0 (2026-09-08)
 
 ### Added

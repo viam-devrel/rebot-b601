@@ -56,11 +56,28 @@ def test_dropped_bus_still_closes_its_controller(factory):
     assert ctrl.closed
 
 
+def test_release_frees_motor_handles_before_the_controller(factory):
+    bus = SharedBus.acquire("/dev/fake0")
+    handles = [bus.motor(cid) for cid in (0x01, 0x07)]
+    bus.release()
+    assert all(h.closed for h in handles) and factory.latest.closed
+
+
+def test_dropped_bus_frees_motor_handles_too(factory):
+    bus = SharedBus.acquire("/dev/fake0")
+    handle = bus.motor(0x01)
+    SharedBus.reset_instances()
+    del bus
+    gc.collect()
+    assert handle.closed
+
+
 def test_reconnect_does_not_leak_the_old_controller(factory):
     bus = SharedBus.acquire("/dev/fake0")
     first = factory.latest
+    old_handle = bus.motor(0x01)
     bus.reconnect(attempts=1)
-    assert first.closed
+    assert first.closed and old_handle.closed
     assert factory.latest is not first and not factory.latest.closed
     bus.release()
     assert factory.latest.closed

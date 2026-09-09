@@ -166,7 +166,23 @@ def _open_controller(port: str, baud: int):
     return Controller.from_dm_serial(serial_port=port, baud=baud)
 
 
-def _quiet_close(controller) -> None:
+def _quiet_close(controller, motors: Optional[dict] = None) -> None:
+    """Free motor handles, then the controller.
+
+    Order matters: each motorbridge Motor handle holds its own reference to the
+    serial bus, so ``Controller.close()`` alone leaves the port open until every
+    handle is freed, and Motor has no destructor. This is how a module process
+    ended up locked out of its own port for days.
+    """
+    if motors:
+        for m in list(motors.values()):
+            try:
+                close = getattr(m, "close", None)
+                if close is not None:
+                    close()
+            except Exception:
+                pass
+        motors.clear()
     try:
         if controller is not None:
             controller.close()
@@ -327,11 +343,13 @@ class SharedBus:
     def _set_controller(self, controller):
         self._detach_finalizer()
         self.controller = controller
+        # One dict per controller: motor() fills it in place and the finalizer
+        # below holds the same object, so handles created later are still freed.
         self._motors = {}
         if controller is not None:
             # Fires if this bus is garbage-collected without release(); the
             # callback must not reference self or it would never be collected.
-            self._finalizer = weakref.finalize(self, _quiet_close, controller)
+            self._finalizer = weakref.finalize(self, _quiet_close, controller, self._motors)
 
     def _detach_finalizer(self):
         if self._finalizer is not None:
@@ -341,8 +359,7 @@ class SharedBus:
     def _close_controller(self):
         self._detach_finalizer()
         controller, self.controller = self.controller, None
-        self._motors = {}
-        _quiet_close(controller)
+        _quiet_close(controller, self._motors)
 
     # --------------------------------------------------------------- cache
 
