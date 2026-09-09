@@ -47,7 +47,7 @@ DEFAULT_STALL_POLLS = 4  # consecutive near-zero-velocity polls that count as se
 DEFAULT_MOVE_TIMEOUT_S = 6.0
 
 _ENSURE_MODE_RETRIES = 9
-_SETTLE_SEC = 0.01
+_SETTLE_SEC = 0.02
 _MOVING_VEL_RAD_S = 0.05
 _POLL_SEC = 0.05
 _ARRIVE_TOL_DEG = 2.0
@@ -169,8 +169,14 @@ class B601Gripper(Gripper, EasyResource):
                     try:
                         motor.ensure_mode(Mode.FORCE_POS)
                         break
-                    except LINK_ERRORS:
-                        raise
+                    except LINK_ERRORS as exc:
+                        # A Damiao motor is busy answering enable() for a moment and
+                        # misses the first register read; that timeout is transient
+                        # and must be retried (0.2.0 stopped doing so and every
+                        # build failed on hardware that a plain scan could see).
+                        if not is_motor_timeout(exc) or attempt == _ENSURE_MODE_RETRIES:
+                            raise
+                        time.sleep(_SETTLE_SEC)
                     except Exception:
                         if attempt == _ENSURE_MODE_RETRIES:
                             raise

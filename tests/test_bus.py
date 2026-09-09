@@ -191,14 +191,29 @@ def test_acquire_reopens_a_bus_left_closed_by_a_failed_reconnect(factory):
 def test_motor_timeout_is_not_treated_as_a_dead_link(factory, monkeypatch):
     from tests.fake_bus import FakeMotor
 
-    def silent(self):
-        raise CallError("ensure_mode failed: register 10 not received within 100ms")
-
-    monkeypatch.setattr(FakeMotor, "enable", silent)
+    monkeypatch.setattr(FakeMotor, "default_mode_timeouts", 1000)  # never answers
     with pytest.raises(BusError, match="motor did not reply"):
         B601Arm.new(make_config("arm", port="/dev/fake0"), {})
     assert len(factory.controllers) == 1  # no close-and-reopen of the port
     assert SharedBus._instances == {}  # and the failed build released it
+
+
+async def test_transient_register_timeout_after_enable_is_retried(factory, monkeypatch):
+    """A Damiao motor misses the first register read right after enable(); the build must survive it."""
+    from tests.fake_bus import FakeMotor
+
+    monkeypatch.setattr(FakeMotor, "default_mode_timeouts", 3)
+    arm = B601Arm.new(make_config("arm", port="/dev/fake0"), {})
+    assert all(m.mode is not None and m.mode_timeouts == 0 for m in factory.latest.motors.values())
+    assert arm.bus.reconnects == 0 and len(factory.controllers) == 1
+    await arm.close()
+
+    from src.rebot_b601.gripper import B601Gripper
+
+    monkeypatch.setattr(FakeMotor, "default_mode_timeouts", 3)
+    g = B601Gripper.new(make_config("gripper", port="/dev/fake1"), {})
+    assert factory.latest.motors[0x07].mode is not None
+    await g.close()
 
 
 async def test_discovery_emits_arm_and_gripper_configs_per_board(monkeypatch):

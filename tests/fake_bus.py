@@ -16,6 +16,8 @@ from motorbridge.models import MotorState
 
 
 class FakeMotor:
+    default_mode_timeouts = 0  # tests set this before motors are created (they are created lazily)
+
     def __init__(self, controller: "FakeController", can_id: int, feedback_id: int, model: str):
         self.controller = controller
         self.can_id = can_id
@@ -40,6 +42,8 @@ class FakeMotor:
         self._last_update = time.monotonic()
         self._requested = False
         self.mode_failures = 0  # ensure_mode raises this many times first
+        # ensure_mode times out (CallError, like a real motor busy after enable) this many times first
+        self.mode_timeouts = FakeMotor.default_mode_timeouts
         self.closed = False  # motorbridge.Motor.close() was called (frees the handle's bus reference)
 
     # --- motorbridge.Motor API ---
@@ -60,6 +64,9 @@ class FakeMotor:
 
     def ensure_mode(self, mode):
         self.controller._check_link()
+        if self.mode_timeouts > 0:
+            self.mode_timeouts -= 1
+            raise CallError("ensure_mode failed: register 10 not received within 100ms")
         if self.mode_failures > 0:
             self.mode_failures -= 1
             raise RuntimeError("mode not settled")

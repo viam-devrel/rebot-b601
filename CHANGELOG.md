@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2 (2026-09-09)
+
+### Fixed
+- Startup regression since 0.2.0: a Damiao motor is briefly busy answering `enable()` and misses the
+  first `ensure_mode` register read. 0.1.0 retried that; 0.2.0 re-raised link-class errors at once, so
+  every build failed with "register 10 not received within 100ms" on hardware a plain scan could see.
+  Motor reply timeouts inside the enable/ensure_mode loop are retried again (up to 10 attempts).
+
 ## 0.3.1 (2026-09-09)
 
 ### Fixed

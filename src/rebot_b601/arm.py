@@ -48,7 +48,7 @@ DEFAULT_MANUAL_KD = 0.5
 DEFAULT_MANUAL_HZ = 50.0
 
 _ENSURE_MODE_RETRIES = 9
-_SETTLE_SEC = 0.01
+_SETTLE_SEC = 0.02
 _MOVING_VEL_RAD_S = 0.05
 _DEFAULT_TOLERANCE_DEG = 2.0
 _SETTLE_POLL_SEC = 0.05
@@ -244,8 +244,14 @@ class B601Arm(Arm, EasyResource):
                         try:
                             motor.ensure_mode(target_mode)
                             break
-                        except LINK_ERRORS:
-                            raise
+                        except LINK_ERRORS as exc:
+                            # A Damiao motor is busy answering enable() for a moment and
+                            # misses the first register read; that timeout is transient
+                            # and must be retried (0.2.0 stopped doing so and every
+                            # build failed on hardware that a plain scan could see).
+                            if not is_motor_timeout(exc) or attempt == _ENSURE_MODE_RETRIES:
+                                raise
+                            time.sleep(_SETTLE_SEC)
                         except Exception:
                             if attempt == _ENSURE_MODE_RETRIES:
                                 raise
