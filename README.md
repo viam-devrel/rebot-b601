@@ -74,7 +74,8 @@ a SIP-protected binary, so the venv must come from `uv` (which `run.sh` prefers)
 Python; one built from `/usr/bin/python3` drops the export and motorbridge reports `load PCBUSB failed`.
 
 Not on RS yet: support covers joint reading and control only. `get_end_position`, `get_kinematics`,
-`get_geometries`, `get_3d_models`, and `move_to_position` describe the DM arm, the gripper component refuses
+`get_geometries`, `get_3d_models`, and `move_to_position` describe the DM arm (the served URDF does carry the RS
+joint limits, so joint moves through viam-server are accepted), the gripper component refuses
 to attach to an RS arm, and discovery finds DM boards only. Manual mode is damping only, since gravity
 compensation uses the DM arm's mass model: `gravity_scale` is forced to 0 and `gravity_torques` refuses.
 Joint positions still work when the motors send no status frames (they are read as parameters), including
@@ -209,7 +210,9 @@ centres of mass at 50 Hz. It has **not been validated on hardware yet**: start w
 
 ## Kinematics, geometry, and 3D models
 
-DM only; see B601-RS.
+DM only; see B601-RS. The one RS adjustment: the served URDF carries the arm's soft `joint_limits_deg`
+instead of the DM ranges, because viam-server checks joint targets against them and the DM ranges would
+reject every position the RS motors can reach on joints 2 and 3.
 
 - `get_kinematics` serves the bundled URDF with `<collision>` bodies added per `collision_geometry`.
   In `meshes` mode the decimated STLs are shipped in the same response, so viam-server needs no files.

@@ -10,6 +10,9 @@
   reporting; when no status frame arrives, positions come from `mechPos` and the joint reports
   `position_only`. With torque off, stopped RobStride motors stop streaming and would report a frozen
   frame, so positions are read by parameter until torque is enabled again.
+- On RS the served kinematics file carries the arm's soft `joint_limits_deg` instead of the DM URDF's
+  ranges; viam-server checks joint targets against them, and the DM ranges rejected every RS target on
+  joints 2 and 3.
 - `run.sh` exports `DYLD_LIBRARY_PATH=/usr/local/lib` on macOS when the MacCAN runtime is installed.
 - `tests/smoke_hardware.py --variant rs --port can0 [--move]`; the move step is gated behind an explicit
   Enter, refuses on any motor fault, and flag abbreviations are disabled so `--m` cannot move the arm.

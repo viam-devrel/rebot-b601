@@ -717,7 +717,10 @@ class B601Arm(Arm, EasyResource):
         return any(abs(s.vel) > self.moving_vel_rad_s for s in states.values() if s is not None)
 
     async def get_kinematics(self, *, extra=None, timeout=None, **kwargs):
-        return kinematics.arm_kinematics(self.collision_mode, self.include_gripper_geometry)
+        # The bundled URDF is the DM arm; on RS its joint 2/3 range (-180..0) would make
+        # viam-server reject every target the RS motors can reach. Serve the soft limits.
+        limits = self.joint_limits if self.variant == "rs" else None
+        return kinematics.arm_kinematics(self.collision_mode, self.include_gripper_geometry, limits)
 
     async def get_geometries(self, *, extra=None, timeout=None, **kwargs) -> List[Geometry]:
         positions = await asyncio.to_thread(self._read_positions_deg)

@@ -248,6 +248,27 @@ async def test_rs_positions_track_the_arm_with_torque_off(factory):
     assert arm._health_report()["joint1"]["position_only"] is False
 
 
+async def test_rs_kinematics_carry_the_rs_joint_limits(factory):
+    """viam-server checks MoveToJointPositions against the served URDF's limits. The DM
+    URDF puts joints 2 and 3 in -180..0, so an RS arm serving it could not move them at all."""
+    import xml.etree.ElementTree as ET
+
+    def limits(data):
+        root = ET.fromstring(data)
+        return {
+            j.get("name"): (float(j.find("limit").get("lower")), float(j.find("limit").get("upper")))
+            for j in root.findall("joint")
+            if j.get("type") == "revolute"
+        }
+
+    rs = B601Arm.new(make_config("arm", **RS), {})
+    got = limits((await rs.get_kinematics())[1])
+    assert got["joint2"] == (math.radians(-5.0), math.radians(179.0))
+    assert got["joint1"] == (math.radians(-160.0), math.radians(160.0))
+    dm = B601Arm.new(make_config("arm2", port="/dev/fake1"), {})
+    assert limits((await dm.get_kinematics())[1])["joint2"] == (-3.14, 0.0)  # DM URDF untouched
+
+
 async def test_rs_limits_admit_a_slightly_negative_rest_pose(factory):
     """Bench 2026-09-18: the RS arm rests at about -1 deg on joints 2 and 3 (zero calibration is
     not exact), so a limit at -1.0 rejected the arm's own rest pose."""

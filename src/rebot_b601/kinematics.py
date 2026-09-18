@@ -93,12 +93,27 @@ def available_links(mode: str) -> List[str]:
     return []
 
 
-def arm_kinematics(mode: str = "primitives", include_gripper_geometry: bool = False):
-    """Return the get_kinematics tuple for the arm: (format, urdf_bytes[, meshes])."""
+def arm_kinematics(
+    mode: str = "primitives",
+    include_gripper_geometry: bool = False,
+    joint_limits_deg: Optional[Sequence[Tuple[float, float]]] = None,
+):
+    """Return the get_kinematics tuple for the arm: (format, urdf_bytes[, meshes]).
+
+    ``joint_limits_deg`` (one (lo, hi) per revolute joint, base first) replaces the
+    URDF's joint limits. viam-server checks joint targets against these, so an arm
+    whose motors count differently from the bundled URDF (the B601-RS) must serve
+    its own range or it cannot be moved through the API at all.
+    """
     if mode not in COLLISION_MODES:
         raise ValueError(f"collision_geometry must be one of {COLLISION_MODES}")
     tree = ET.parse(spatial.URDF_PATH)
     root = tree.getroot()
+    if joint_limits_deg is not None:
+        revolute = [j for j in root.findall("joint") if j.get("type") == "revolute"]
+        for joint, (lo, hi) in zip(revolute, joint_limits_deg):
+            joint.find("limit").set("lower", str(math.radians(lo)))
+            joint.find("limit").set("upper", str(math.radians(hi)))
     meshes: Dict[str, Mesh] = {}
     links = list(ARM_LINKS)
     if include_gripper_geometry:
