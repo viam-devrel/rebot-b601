@@ -61,7 +61,7 @@ B601-RS arm on a CAN interface:
 ### B601-RS
 
 The RS arm is six RobStride motors on plain CAN at 1 Mbps (rs-06 for joints 1–3, rs-00 for joints 4–6),
-addressed by the module as host id `0xFD`. Seeed run the RS arm in MIT mode. On RS each `pos_vel` setpoint
+addressed by the module as host id `0xFD`. Seeed run the RS arm in MIT mode, and on the bench `pos_vel` with the motors' stored gains stopped about 3° short of its targets ("move timed out" warnings). On RS each `pos_vel` setpoint
 costs two parameter writes per joint, so `control_mode: "mit"` is usually the better default although
 `pos_vel` remains the module's.
 
@@ -93,14 +93,14 @@ Safety and Troubleshooting).
 | `acceleration_deg_s2` | number or [6] | `200` | Max joint acceleration, deg/s² (clamped to 1–1000) |
 | `move_hz` | number | `50` | Setpoint streaming rate for interpolated moves |
 | `mit_kp` / `mit_kd` | number or [6] | Seeed defaults, per variant | MIT-mode gains |
-| `joint_limits_deg` | [6][2] | conservative defaults, per variant | Soft limits. Targets outside them are **rejected**. The RS URDF mirrors DM on joints 2 and 3, which span 0–180° there |
+| `joint_limits_deg` | [6][2] | conservative defaults, per variant | Soft limits. Targets outside them are **rejected**. The RS URDF mirrors DM on joints 2 and 3, which span 0–180° there (folding reads positive); the RS default lower edge is -5° because an arm whose zero is a degree off rests slightly negative |
 | `clip_targets` | bool | `false` | Clip out-of-limit targets (with a warning) instead of rejecting them |
 | `bad_joints` | [int] | `[]` | Joint indices (0–5) to hold at their current position; excluded from targets and limit checks |
 | `tolerance_deg` | number | `2.0` | Settle tolerance for blocking moves |
 | `motion` | string | unset | Name of a motion service (usually `"builtin"`) used by `move_to_position` |
 | `collision_geometry` | string | `"primitives"` | Collision bodies in the served URDF: `"primitives"` (one box per link), `"meshes"` (decimated vendor STLs), or `"none"` |
 | `include_gripper_geometry` | bool | `false` | Attach the gripper-base box to the arm's end link. Leave off when the gripper component is configured, or the two will self-collide |
-| `torque_limit_nm` | number or [6] | unset | Software collision stop: abort and hold when a joint's measured torque exceeds this for `torque_trip_polls` consecutive polls. Unverified on RS: RobStride status frames reported zero torque at idle on the bench |
+| `torque_limit_nm` | number or [6] | unset | Software collision stop: abort and hold when a joint's measured torque exceeds this for `torque_trip_polls` consecutive polls. Works on RS: a holding joint reports 1–2 Nm; torque reads 0 only while the motor is unpowered or known by position alone |
 | `torque_trip_polls` | int | `3` | Consecutive over-limit polls (at 10 Hz) that count as a collision |
 | `temperature_warn_c` | number | `60` | Log a warning when a motor is at or above this temperature |
 | `temperature_limit_c` | number | `80` | Refuse and abort moves when a motor is at or above this temperature |
@@ -266,6 +266,11 @@ Both the arm and the gripper resolve `port` to the real device before opening it
 stayed silent: check arm power and the CAN daisy chain. The module no longer reopens the port for this,
 since another driver probing the same tty can produce exactly this symptom.
 
+- **RS: `joint2 target -1.5 deg is outside the limits` at or near the rest pose** — the arm rests a little
+  below 0° when its zero is not exact. Re-zero it at rest (Calibration), or widen `joint_limits_deg`. The
+  default lower edge on joints 2 and 3 is -5°.
+- **RS: `move timed out after 2.0s; position error [..., 2.9]`** in `pos_vel` — the motors' stored
+  position-loop gains are soft. Use `control_mode: "mit"`.
 - **RS: `joint1 (0x01) reports undervoltage`** — the rs-06 motors flag a low supply in their status frame and the
   module refuses to move until it clears. Check the supply voltage, then `{"clear_errors": true}`.
 - **RS: log says `no status frames from motor(s) ...; positions read from mechPos`** — the motors are not

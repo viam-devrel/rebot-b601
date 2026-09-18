@@ -431,6 +431,13 @@ class SharedBus:
             bus._refcount += 1
             return bus
 
+    @classmethod
+    def vendor_of(cls, port: str) -> Optional[str]:
+        """Vendor of the bus already open on ``port``, or None when nothing holds it."""
+        with cls._instances_lock:
+            bus = cls._instances.get(canonical_device(port))
+            return bus.vendor if bus is not None else None
+
     def matches(self, port: str, baud: int, vendor: str = "damiao") -> bool:
         """True when ``port``/``baud``/``vendor`` name this same bus (aliases resolved)."""
         return canonical_device(port) == self.device and int(baud) == self.baud and vendor == self.vendor

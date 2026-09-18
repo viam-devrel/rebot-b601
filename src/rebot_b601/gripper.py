@@ -108,17 +108,18 @@ class B601Gripper(Gripper, EasyResource):
             # Inherit the bus settings from the arm when it is a local B601Arm.
             for rn, dep in dependencies.items():
                 if rn.name == arm_name and hasattr(dep, "bus") and dep.bus is not None:
-                    if dep.bus.vendor != "damiao":
-                        # The gripper drives its motor in Damiao FORCE_POS mode and would
-                        # otherwise fight the arm for the CAN channel with a vendor mismatch.
-                        raise ValueError(
-                            f"the gripper is not supported on the B601-RS yet (arm '{arm_name}' has "
-                            "variant 'rs'); remove the gripper component for now"
-                        )
                     port = port or dep.bus.port
                     baud = baud or dep.bus.baud
         port = port or detect_port()
         baud = int(baud or DEFAULT_BAUD)
+        if SharedBus.vendor_of(port) not in (None, "damiao"):
+            # Under viam-server the arm dependency is a gRPC client, so the only reliable
+            # sign of an RS arm is the bus it already holds. The gripper drives its motor
+            # in Damiao FORCE_POS mode and would otherwise fail with a vendor mismatch.
+            raise ValueError(
+                f"the gripper is not supported on the B601-RS yet (an RS arm holds {port}); "
+                "remove the gripper component for now"
+            )
 
         self.open_deg = float(attrs.get("open_position_deg", DEFAULT_OPEN_DEG))
         self.closed_deg = float(attrs.get("closed_position_deg", DEFAULT_CLOSED_DEG))

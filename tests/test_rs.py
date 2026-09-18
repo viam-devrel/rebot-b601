@@ -150,8 +150,8 @@ def test_rs_variant_builds_a_robstride_arm_with_active_report(factory):
     assert arm.mit_kd == [3.0, 10.0, 10.0, 5.0, 4.0, 4.0]
     assert arm.joint_limits == [
         (-160.0, 160.0),
-        (-1.0, 179.0),
-        (-1.0, 179.0),
+        (-5.0, 179.0),
+        (-5.0, 179.0),
         (-89.0, 89.0),
         (-89.0, 89.0),
         (-179.0, 179.0),
@@ -230,6 +230,15 @@ async def test_rs_rejects_dm_shaped_targets(factory):
         await arm.move_to_joint_positions(JointPositions(values=[0, -90, 0, 0, 0, 0]))
 
 
+async def test_rs_limits_admit_a_slightly_negative_rest_pose(factory):
+    """Bench 2026-09-18: the RS arm rests at about -1 deg on joints 2 and 3 (zero calibration is
+    not exact), so a limit at -1.0 rejected the arm's own rest pose."""
+    arm = B601Arm.new(make_config("arm", **RS), {})
+    for m in factory.latest.motors.values():
+        m.vel_cap = 100.0
+    await arm.move_to_joint_positions(JointPositions(values=[0, -3, -3, 0, 0, 0]))
+
+
 def test_switching_variant_on_the_same_port_reopens_the_bus(factory):
     arm = B601Arm.new(make_config("arm", **RS), {})
     first = arm.bus
@@ -239,12 +248,13 @@ def test_switching_variant_on_the_same_port_reopens_the_bus(factory):
 
 
 def test_gripper_refuses_to_attach_to_an_rs_arm(factory):
+    """Under viam-server the arm dependency is a gRPC client, so the gripper cannot read its
+    variant; the RS arm's hold on the CAN channel is the reliable sign."""
     from src.rebot_b601.gripper import B601Gripper
 
     arm = B601Arm.new(make_config("arm", **RS), {})
-    deps = {arm.get_resource_name("arm"): arm}
     with pytest.raises(ValueError, match="not supported on the B601-RS"):
-        B601Gripper.new(make_config("gripper", arm="arm"), deps)
+        B601Gripper.new(make_config("gripper", arm="arm", port="can0"), {})
     assert arm.bus.controller is not None  # the arm's bus is untouched by the failed gripper build
 
 

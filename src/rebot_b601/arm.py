@@ -44,10 +44,12 @@ DEFAULT_JOINT_LIMITS = [(-150.0, 150.0), (-179.0, 1.0), (-179.0, 1.0), (-107.0, 
 VARIANT_VENDOR = {"dm": "damiao", "rs": "robstride"}
 VARIANTS = tuple(VARIANT_VENDOR)
 # B601-RS: Seeed's RobStride reference gains, and soft limits just inside the RS URDF
-# (joints 2 and 3 span 0..pi on that arm, the mirror of the DM arm).
+# (joints 2 and 3 span 0..pi on that arm, the mirror of the DM arm; bench-confirmed
+# 2026-09-18, folding reads positive). The lower edge sits 5 deg below the URDF's 0
+# because the arm rests about 1 deg negative when its zero is not exact.
 RS_MIT_KP = [50.0, 150.0, 150.0, 50.0, 50.0, 50.0]
 RS_MIT_KD = [3.0, 10.0, 10.0, 5.0, 4.0, 4.0]
-RS_JOINT_LIMITS = [(-160.0, 160.0), (-1.0, 179.0), (-1.0, 179.0), (-89.0, 89.0), (-89.0, 89.0), (-179.0, 179.0)]
+RS_JOINT_LIMITS = [(-160.0, 160.0), (-5.0, 179.0), (-5.0, 179.0), (-89.0, 89.0), (-89.0, 89.0), (-179.0, 179.0)]
 DEFAULT_TEMP_WARN_C = 60.0
 DEFAULT_TEMP_LIMIT_C = 80.0
 DEFAULT_TORQUE_TRIP_POLLS = 3
