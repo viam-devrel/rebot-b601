@@ -37,8 +37,6 @@ from viam.logging import getLogger
 
 LOGGER = getLogger(__name__)
 
-VENDORS = ("damiao", "robstride")
-
 # Motor model per CAN id and vendor, from Seeed's B601-DM and B601-RS reference configs.
 MOTOR_MODELS = {
     "damiao": {0x01: "4340P", 0x02: "4340P", 0x03: "4340P", 0x04: "4310", 0x05: "4310", 0x06: "4310", 0x07: "4310"},
@@ -52,6 +50,7 @@ MOTOR_MODELS = {
         0x07: "rs-00",
     },
 }
+VENDORS = tuple(MOTOR_MODELS)
 FEEDBACK_ID_OFFSET = 0x10  # Damiao: motor 0x01 replies on 0x11, etc.
 ROBSTRIDE_HOST_ID = 0xFD  # RobStride: every motor addresses the host as 0xFD
 RID_ROBSTRIDE_MECH_POS = 0x7019  # RobStride mechPos parameter, rad

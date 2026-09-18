@@ -189,10 +189,10 @@ class B601Arm(Arm, EasyResource):
         self.manual_kp = float(attrs.get("manual_mode_kp", 0.0))
         self.manual_kd = float(attrs.get("manual_mode_kd", DEFAULT_MANUAL_KD))
         self.gravity_scale = float(attrs.get("gravity_scale", 1.0))
-        if rs and self.gravity_scale != 0.0:
+        if rs:
             # spatial.py models the DM arm; the RS arm's axes differ, so the feed-forward
             # would have the wrong sign. Manual mode stays available as pure damping.
-            if "gravity_scale" in attrs:
+            if attrs.get("gravity_scale"):
                 LOGGER.warning("gravity compensation is not modelled for the B601-RS yet; manual mode is damping only")
             self.gravity_scale = 0.0
         self.payload_kg = float(attrs.get("payload_kg", 0.0))

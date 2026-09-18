@@ -32,15 +32,12 @@ NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "gripper"]
 ap = argparse.ArgumentParser(
     description=__doc__, allow_abbrev=False, formatter_class=argparse.RawDescriptionHelpFormatter
 )
-ap.add_argument("port_pos", nargs="?", metavar="port", help="serial device (dm) or CAN channel (rs)")
-ap.add_argument("--port", help="same as the positional port")
+ap.add_argument("--port", help="serial device (dm, default: auto-detect) or CAN channel (rs, required)")
 ap.add_argument("--variant", choices=("dm", "rs"), default="dm")
 ap.add_argument("--move", action="store_true", help="enable torque and nudge joint 6 by 5 deg (MOVES THE ARM)")
 args = ap.parse_args()
 
-if args.port and args.port_pos and args.port != args.port_pos:
-    ap.error("port given twice with different values")
-port = args.port or args.port_pos
+port = args.port
 if not port:
     if args.variant == "rs":
         ap.error("--port is required for --variant rs (e.g. can0 or PCAN_USBBUS1)")

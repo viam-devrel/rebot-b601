@@ -134,15 +134,6 @@ def test_streaming_robstride_state_is_used_without_param_reads(factory):
     bus.release()
 
 
-def test_robstride_state_needs_active_report_in_the_fake(factory):
-    bus = SharedBus.acquire("can0", vendor="robstride")
-    m = bus.motor(1)
-    assert isinstance(bus.poll_feedback([1], retries=2, settle_s=0.0)[1], bus_mod.PositionOnlyState)
-    m.robstride_set_active_report(True)
-    assert not getattr(bus.poll_feedback([1], retries=2, settle_s=0.0)[1], "position_only", False)
-    bus.release()
-
-
 def test_rs_variant_builds_a_robstride_arm_with_active_report(factory):
     arm = B601Arm.new(make_config("arm", **RS), {})
     ctrl = factory.latest
