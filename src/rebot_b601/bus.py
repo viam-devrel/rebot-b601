@@ -34,17 +34,23 @@ from viam.logging import getLogger
 
 LOGGER = getLogger(__name__)
 
-# Damiao motor model per CAN id, from Seeed's B601-DM reference implementation.
+VENDORS = ("damiao", "robstride")
+
+# Motor model per CAN id and vendor, from Seeed's B601-DM and B601-RS reference configs.
 MOTOR_MODELS = {
-    0x01: "4340P",
-    0x02: "4340P",
-    0x03: "4340P",
-    0x04: "4310",
-    0x05: "4310",
-    0x06: "4310",
-    0x07: "4310",
+    "damiao": {0x01: "4340P", 0x02: "4340P", 0x03: "4340P", 0x04: "4310", 0x05: "4310", 0x06: "4310", 0x07: "4310"},
+    "robstride": {
+        0x01: "rs-06",
+        0x02: "rs-06",
+        0x03: "rs-06",
+        0x04: "rs-00",
+        0x05: "rs-00",
+        0x06: "rs-00",
+        0x07: "rs-00",
+    },
 }
-FEEDBACK_ID_OFFSET = 0x10  # motor 0x01 replies on 0x11, etc.
+FEEDBACK_ID_OFFSET = 0x10  # Damiao: motor 0x01 replies on 0x11, etc.
+ROBSTRIDE_HOST_ID = 0xFD  # RobStride: every motor addresses the host as 0xFD
 
 DEFAULT_BAUD = 921600
 
@@ -158,12 +164,26 @@ def detect_port() -> str:
 
 
 def canonical_device(port: str) -> str:
-    """Resolve symlinks so every alias of a serial device maps to one bus."""
+    """Resolve symlinks so every alias of a serial device maps to one bus.
+
+    CAN channel names (``can0``, ``PCAN_USBBUS1``) are not paths and are used as-is.
+    """
+    if not port.startswith("/"):
+        return port
     return os.path.realpath(port)
 
 
+def is_serial_port(port: str) -> bool:
+    """True for the Damiao USB serial bridge; anything else is a CAN channel."""
+    return port.startswith("/dev/")
+
+
 def _open_controller(port: str, baud: int):
-    return Controller.from_dm_serial(serial_port=port, baud=baud)
+    if is_serial_port(port):
+        return Controller.from_dm_serial(serial_port=port, baud=baud)
+    # A CAN channel: SocketCAN on Linux (can0), PCAN via libPCBUSB on macOS (can0 or
+    # PCAN_USBBUS1). The vendor never decides the transport; the port string does.
+    return Controller(port)
 
 
 def _quiet_close(controller, motors: Optional[dict] = None) -> None:
@@ -292,10 +312,13 @@ class SharedBus:
     # Test hook: replace to construct a fake controller instead of opening serial.
     controller_factory: Callable[[str, int], object] = staticmethod(_open_controller)
 
-    def __init__(self, port: str, baud: int):
+    def __init__(self, port: str, baud: int, vendor: str = "damiao"):
+        if vendor not in VENDORS:
+            raise BusError(f"unknown motor vendor '{vendor}'; expected one of {VENDORS}")
         self.port = port  # as configured, for logs
         self.device = canonical_device(port)  # cache key
         self.baud = baud
+        self.vendor = vendor
         self.lock = threading.RLock()
         self.controller = None
         self._finalizer: Optional[weakref.finalize] = None
@@ -364,15 +387,17 @@ class SharedBus:
     # --------------------------------------------------------------- cache
 
     @classmethod
-    def acquire(cls, port: str, baud: int = DEFAULT_BAUD) -> "SharedBus":
+    def acquire(cls, port: str, baud: int = DEFAULT_BAUD, vendor: str = "damiao") -> "SharedBus":
         device = canonical_device(port)
         with cls._instances_lock:
             bus = cls._instances.get(device)
             if bus is None:
-                bus = cls(port, baud)
+                bus = cls(port, baud, vendor)
                 cls._instances[device] = bus
             elif bus.baud != baud:
                 raise BusError(f"{port} is already open at {bus.baud} baud; cannot reopen it at {baud}")
+            elif bus.vendor != vendor:
+                raise BusError(f"{port} is already open for {bus.vendor} motors; cannot reopen it for {vendor}")
             elif bus.controller is None:
                 # A previous reconnect gave up and left the bus closed while
                 # someone still held a reference. Reopen rather than hand back
@@ -382,9 +407,9 @@ class SharedBus:
             bus._refcount += 1
             return bus
 
-    def matches(self, port: str, baud: int) -> bool:
-        """True when ``port``/``baud`` name this same bus (aliases resolved)."""
-        return canonical_device(port) == self.device and int(baud) == self.baud
+    def matches(self, port: str, baud: int, vendor: str = "damiao") -> bool:
+        """True when ``port``/``baud``/``vendor`` name this same bus (aliases resolved)."""
+        return canonical_device(port) == self.device and int(baud) == self.baud and vendor == self.vendor
 
     @classmethod
     def reset_instances(cls):
@@ -439,7 +464,13 @@ class SharedBus:
                 raise BusError(f"{self.port} is not open")
             m = self._motors.get(can_id)
             if m is None:
-                m = self.controller.add_damiao_motor(can_id, can_id + FEEDBACK_ID_OFFSET, MOTOR_MODELS[can_id])
+                if self.vendor == "robstride":
+                    model = MOTOR_MODELS["robstride"][can_id]
+                    m = self.controller.add_robstride_motor(can_id, ROBSTRIDE_HOST_ID, model)
+                else:
+                    m = self.controller.add_damiao_motor(
+                        can_id, can_id + FEEDBACK_ID_OFFSET, MOTOR_MODELS["damiao"][can_id]
+                    )
                 self._motors[can_id] = m
             return m
 

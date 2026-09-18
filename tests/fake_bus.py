@@ -18,11 +18,12 @@ from motorbridge.models import MotorState
 class FakeMotor:
     default_mode_timeouts = 0  # tests set this before motors are created (they are created lazily)
 
-    def __init__(self, controller: "FakeController", can_id: int, feedback_id: int, model: str):
+    def __init__(self, controller: "FakeController", can_id: int, feedback_id: int, model: str, vendor: str = "damiao"):
         self.controller = controller
         self.can_id = can_id
         self.feedback_id = feedback_id
         self.model = model
+        self.vendor = vendor
         self.pos = 0.0  # rad
         self.vel = 0.0  # rad/s
         self.torq = 0.0
@@ -53,8 +54,8 @@ class FakeMotor:
     def enable(self):
         self.controller._check_link()
         self.enabled = True
-        if self.status_code == 0x0:
-            self.status_code = 0x1
+        if self.vendor == "damiao" and self.status_code == 0x0:
+            self.status_code = 0x1  # Damiao reports "enabled"; RobStride's field is fault bits, 0 = healthy
 
     def disable(self):
         self.controller._check_link()
@@ -116,7 +117,9 @@ class FakeMotor:
     def clear_error(self):
         self.controller._check_link()
         self.errors_cleared += 1
-        if self.status_code >= 0x8:
+        if self.vendor == "robstride":
+            self.status_code = 0x0
+        elif self.status_code >= 0x8:
             self.status_code = 0x1 if self.enabled else 0x0
 
     def set_can_timeout_ms(self, ms):
@@ -172,6 +175,14 @@ class FakeController:
         m = self.motors.get(motor_id)
         if m is None:
             m = FakeMotor(self, motor_id, feedback_id, model)
+            self.motors[motor_id] = m
+        return m
+
+    def add_robstride_motor(self, motor_id: int, feedback_id: int, model: str) -> FakeMotor:
+        self._check_link()
+        m = self.motors.get(motor_id)
+        if m is None:
+            m = FakeMotor(self, motor_id, feedback_id, model, vendor="robstride")
             self.motors[motor_id] = m
         return m
 
