@@ -27,4 +27,10 @@ if [ "${1:-}" = "--check" ]; then
     exec "$VENV/bin/python" -c "import src.main; from src.rebot_b601 import arm_service; assert arm_service.installed(); print('rebot-b601 module OK')"
 fi
 
+# macOS + PEAK PCAN-USB (B601-RS): motorbridge dlopens the MacCAN runtime by bare
+# name only, so point the loader at the usual install location.
+if [ "$(uname)" = "Darwin" ] && [ -f /usr/local/lib/libPCBUSB.dylib ]; then
+    export DYLD_LIBRARY_PATH="/usr/local/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+fi
+
 exec "$VENV/bin/python" -m src.main "$@"
