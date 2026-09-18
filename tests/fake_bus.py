@@ -49,6 +49,7 @@ class FakeMotor:
         self.active_report = False  # RobStride: status frames stream only when this is on
         self.stream_state = True  # False: get_state() never fills, only param reads work
         self.param_reads = 0
+        self._frozen = None  # RobStride: the last frame, served after disable() like the real cache
 
     # --- motorbridge.Motor API ---
     def close(self):
@@ -65,6 +66,10 @@ class FakeMotor:
         self.enabled = False
         self.status_code = 0x0
         self.target = None
+        if self.vendor == "robstride":
+            # Bench 2026-09-18: a stopped RobStride motor stops streaming status frames and
+            # motorbridge keeps serving the last one, so get_state() freezes here.
+            self._frozen = self._state()
 
     def ensure_mode(self, mode):
         self.controller._check_link()
@@ -101,7 +106,9 @@ class FakeMotor:
             return None
         if self.vendor == "robstride":
             # Real RobStride motors ignore request_feedback(); state arrives only as
-            # streamed status frames, which need active report on.
+            # streamed status frames, which need active report on and the motor running.
+            if not self.enabled and self._frozen is not None:
+                return self._frozen
             return self._state() if self.active_report else None
         if not self._requested:
             return None

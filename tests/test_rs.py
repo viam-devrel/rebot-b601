@@ -230,6 +230,24 @@ async def test_rs_rejects_dm_shaped_targets(factory):
         await arm.move_to_joint_positions(JointPositions(values=[0, -90, 0, 0, 0, 0]))
 
 
+async def test_rs_positions_track_the_arm_with_torque_off(factory):
+    """Bench 2026-09-18: stopped RobStride motors stop streaming and motorbridge serves the
+    last frame, so with torque off the arm must read positions by parameter instead."""
+    arm = B601Arm.new(make_config("arm", **RS), {})
+    ctrl = factory.latest
+    await arm.do_command({"torque": "disable"})
+    for cid, m in ctrl.motors.items():
+        m.pos = math.radians(10.0 * cid)  # moved by hand
+    got = (await arm.get_joint_positions()).values
+    assert [round(v, 3) for v in got] == [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    assert arm._health_report()["joint1"]["position_only"] is True
+    # torque back on: streaming resumes and is trusted again
+    await arm.do_command({"torque": "enable"})
+    ctrl.motors[1].pos = 0.0
+    assert round((await arm.get_joint_positions()).values[0], 3) == 0.0
+    assert arm._health_report()["joint1"]["position_only"] is False
+
+
 async def test_rs_limits_admit_a_slightly_negative_rest_pose(factory):
     """Bench 2026-09-18: the RS arm rests at about -1 deg on joints 2 and 3 (zero calibration is
     not exact), so a limit at -1.0 rejected the arm's own rest pose."""

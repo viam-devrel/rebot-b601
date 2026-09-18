@@ -316,7 +316,9 @@ class B601Arm(Arm, EasyResource):
         self._torque_enabled = False
 
     def _read_states(self, retries: int = 5) -> Dict[int, Any]:
-        return self._bus_call(self.bus.poll_feedback, ARM_CAN_IDS, retries)
+        # With torque off a stopped RobStride motor stops streaming and motorbridge would
+        # serve its last frame forever; the bus then reads positions by parameter instead.
+        return self._bus_call(self.bus.poll_feedback, ARM_CAN_IDS, retries, positions_only=not self._torque_enabled)
 
     def _read_positions_deg(self) -> List[float]:
         states = self._read_states()

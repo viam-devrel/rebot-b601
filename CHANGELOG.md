@@ -8,7 +8,8 @@
   health with RobStride fault names. `port` is the CAN channel (`can0` on Linux SocketCAN, `can0` or
   `PCAN_USBBUS1` on macOS PCAN). RS defaults: Seeed's MIT gains, RS soft joint limits, and active status
   reporting; when no status frame arrives, positions come from `mechPos` and the joint reports
-  `position_only`.
+  `position_only`. With torque off, stopped RobStride motors stop streaming and would report a frozen
+  frame, so positions are read by parameter until torque is enabled again.
 - `run.sh` exports `DYLD_LIBRARY_PATH=/usr/local/lib` on macOS when the MacCAN runtime is installed.
 - `tests/smoke_hardware.py --variant rs --port can0 [--move]`; the move step is gated behind an explicit
   Enter, refuses on any motor fault, and flag abbreviations are disabled so `--m` cannot move the arm.

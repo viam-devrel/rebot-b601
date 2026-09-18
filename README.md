@@ -77,7 +77,8 @@ Not on RS yet: support covers joint reading and control only. `get_end_position`
 `get_geometries`, `get_3d_models`, and `move_to_position` describe the DM arm, the gripper component refuses
 to attach to an RS arm, and discovery finds DM boards only. Manual mode is damping only, since gravity
 compensation uses the DM arm's mass model: `gravity_scale` is forced to 0 and `gravity_torques` refuses.
-Joint positions still work when the motors send no status frames (they are read as parameters); the health
+Joint positions still work when the motors send no status frames (they are read as parameters), including
+with torque off, when stopped RobStride motors stop streaming and would otherwise report a frozen frame; the health
 report then shows `position_only: true` and the arm moves without fault, temperature or torque checks (see
 Safety and Troubleshooting).
 

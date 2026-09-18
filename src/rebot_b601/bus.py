@@ -503,18 +503,27 @@ class SharedBus:
                 self._motors[can_id] = m
             return m
 
-    def poll_feedback(self, can_ids: Iterable[int], retries: int = 5, settle_s: float = 0.02):
+    def poll_feedback(
+        self, can_ids: Iterable[int], retries: int = 5, settle_s: float = 0.02, positions_only: bool = False
+    ):
         """Request and collect fresh feedback for the given motors.
 
         A single poll does not always drain every motor's reply off the bus, so
         request/poll is retried until every motor has reported (or retries run
         out). Returns {can_id: MotorState | None}. ``retries=1`` gives a cheap
         best-effort sample for in-loop monitoring.
+
+        ``positions_only`` (RobStride): the caller knows the motors are stopped, so
+        their status stream is off and motorbridge would keep serving the frame it
+        cached at the stop; read positions by parameter instead of trusting it.
         """
         can_ids = list(can_ids)
         with self.lock:
             motors = {cid: self.motor(cid) for cid in can_ids}
             states = {cid: None for cid in can_ids}
+            if positions_only and self.vendor == "robstride":
+                self._fill_from_mechpos(motors, states, expected=True)
+                return states
             for attempt in range(max(1, retries)):
                 for cid, m in motors.items():
                     if states[cid] is None:
@@ -539,7 +548,7 @@ class SharedBus:
                 self._fill_from_mechpos(motors, states)
             return states
 
-    def _fill_from_mechpos(self, motors: Dict[int, Any], states: Dict[int, Any]) -> None:
+    def _fill_from_mechpos(self, motors: Dict[int, Any], states: Dict[int, Any], expected: bool = False) -> None:
         """RobStride motors stream status frames only with active report on. When a
         motor has not filled get_state(), read its mechPos parameter directly, as
         Seeed's reference stack does. Velocity, torque and temperature are unknown
@@ -567,7 +576,7 @@ class SharedBus:
                 t_rotor=0.0,
             )
             recovered.append(cid)
-        if missing:
+        if missing and not expected:
             now = time.monotonic()
             if now - self._last_fallback_warn >= _FALLBACK_WARN_INTERVAL_S:
                 self._last_fallback_warn = now
