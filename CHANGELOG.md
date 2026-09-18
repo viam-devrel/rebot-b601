@@ -11,7 +11,7 @@
   a 0.15 rad/s `is_moving` threshold.
 - `run.sh` exports `DYLD_LIBRARY_PATH=/usr/local/lib` on macOS when the MacCAN runtime is installed.
 - `tests/smoke_hardware.py --variant rs --port can0 [--move]`; the move step is gated behind an explicit
-  Enter and refuses on any motor fault.
+  Enter, refuses on any motor fault, and flag abbreviations are disabled so `--m` cannot move the arm.
 
 ### Changed
 - `raw_state` returns the same per-joint dict as the health report (superset of the old keys: adds

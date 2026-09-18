@@ -37,11 +37,13 @@ On the DM arm both components share one serial connection; the module multiplexe
     to attach to an RS arm; discovery finds DM boards only.
   - Manual mode is damping only. Gravity compensation uses the DM arm's mass model, so `gravity_scale` is
     forced to 0 and the `gravity_torques` command refuses.
-  - The module turns on RobStride active status reporting at startup. Without those status frames joint
-    positions are still read (through the `mechPos` parameter) and the arm moves on position alone with a
-    warning, unlike the DM arm, which refuses to move without feedback. In that state velocity, torque,
-    temperature and faults are unknown, `is_moving` is always false, manual mode commands nothing, and the
-    affected joints report `position_only` in the health report.
+  - The module turns on RobStride active status reporting whenever it configures the motors: at startup with
+    the default `enable_on_start`, on `{"torque": "enable"}`, and after a bus reconnect. Without those status
+    frames joint positions are still read (through the `mechPos` parameter) and the arm moves on position
+    alone with a warning, unlike the DM arm, which refuses to move without feedback. In that state velocity,
+    torque, temperature and faults are unknown, `is_moving` only reflects moves this module is running (the
+    velocity check never fires), manual mode commands nothing, and the affected joints report `position_only`
+    in the health report.
 
 ## Example configuration
 
@@ -103,7 +105,7 @@ B601-RS arm on a CAN interface:
 | `temperature_warn_c` | number | `60` | Log a warning when a motor is at or above this temperature |
 | `temperature_limit_c` | number | `80` | Refuse and abort moves when a motor is at or above this temperature |
 | `can_timeout_ms` | int | unset | Program the Damiao CAN watchdog so a motor disables itself if commands stop arriving (dm only) |
-| `reconnect` | bool | `true` | Reopen the serial bridge and restore motor state after a link failure |
+| `reconnect` | bool | `true` | Reopen the bus (serial bridge or CAN channel) and restore motor state after a link failure |
 | `enable_on_start` | bool | `true` | Enable torque when the component starts |
 | `disable_torque_on_close` | bool | `false` | Let the arm go limp when the component closes (it will slump under gravity!) |
 | `manual_mode_kp` / `manual_mode_kd` | number | `0` / `0.5` | MIT gains used in manual mode |
@@ -153,8 +155,9 @@ B601-RS arm on a CAN interface:
   anyway (see Prerequisites).
 - During a move it samples torque, status, and temperature at 10 Hz. A `torque_limit_nm` trip, a
   fault, or an over-temperature reading aborts the move and holds position.
-- If the serial bridge disappears mid-session, the module reopens it (with backoff), re-enables
-  the motors, and restores their control mode. Set `reconnect: false` to fail fast instead.
+- If the bus (serial bridge or CAN channel) disappears mid-session, the module reopens it (with
+  backoff), re-enables the motors, and restores their control mode. Set `reconnect: false` to fail
+  fast instead.
 - On startup the arm enables torque and holds its current position; it does not move until commanded.
 - Default speeds are gentle (60 deg/s). Keep the workspace clear the first time you command a move.
 
@@ -235,11 +238,14 @@ opens a serial port, so it is safe to run next to other serial devices.
 `{"serial_ports": true}` via DoCommand lists every USB serial device on the machine with its USB id,
 which is the quickest way to see who owns which `/dev/ttyACM*`.
 
-Leaving `port` unset on the arm is fine: it resolves to the B601 the same way. If no board is
+Leaving `port` unset is fine on the DM arm: it resolves to the B601 the same way (`variant: "rs"`
+requires it). If no board is
 attached the component fails with `no B601 USB-CAN board found` and the list of serial devices that
 are present, rather than opening something else.
 
 ## Troubleshooting
+
+The first two entries are about the DM arm's USB-CAN serial bridge; the RS entries follow.
 
 **`Unable to acquire exclusive lock on serial port`** means the USB-CAN board is present but another
 open file descriptor holds it. The error names the holder when it can be seen from `/proc`:
@@ -276,10 +282,12 @@ DYLD_LIBRARY_PATH=/usr/local/lib .venv/bin/python tests/smoke_hardware.py --vari
 DYLD_LIBRARY_PATH=/usr/local/lib .venv/bin/python tests/smoke_hardware.py --variant rs --port can0 --move   # MOVES joint 6 after an explicit Enter
 ```
 
-`--move` enables torque and moves the arm; the arm refuses with its own fault message (undervoltage, for
-example) if any motor reports a fault. Note that argparse abbreviates, so `--m` moves it too.
+The RS read-only run is interactive: it pauses once for a staleness check (move a joint by hand, then press
+Enter) before reading the joints again. `--move` enables torque and moves the arm; the arm refuses with its
+own fault message (undervoltage, for example) if any motor reports a fault. Flag abbreviations are disabled,
+so `--m` is an error, not a move.
 
-Creating a GitHub release (tag `0.3.0` or `v0.3.0`) publishes to the registry through
+Creating a GitHub release (tag `0.4.0` or `v0.4.0`) publishes to the registry through
 `.github/workflows/deploy.yml`; the workflow can also be run by hand with a version input.
 
 ## Comparison with the uFactory xArm module
@@ -306,7 +314,7 @@ when the motion service runs a plan. This module now swaps in its own servicer
 | Trajectory generator hookup | Optional external ML model service | No | No (not planned) |
 | Per-call speed/accel overrides | MoveOptions and `extra` keys | No | Yes, same keys |
 | MoveToPosition | Delegates to a motion service | Raises NotImplemented | Delegates to `motion` |
-| Kinematics | URDF, variant auto-detected | Bundled URDF | Bundled URDF, one variant exists |
+| Kinematics | URDF, variant auto-detected | Bundled URDF | Bundled URDF (DM; RS added in 0.4.0, joints only) |
 | Collision geometry | Boxes, URDF meshes opt-in | None | Boxes, meshes opt-in |
 | Get3DModels (GLB meshes) | Yes | No | Yes |
 | Joint-limit enforcement | Rejects with an error | Clips silently | Rejects (clip opt-in) |
@@ -326,7 +334,7 @@ when the motion service runs a plan. This module now swaps in its own servicer
 ### Not applicable to this hardware
 
 UFactory Studio proxy, force/torque sensor, vacuum grippers, G2 object-detected register,
-firmware collision sensitivity, hardware variant detection, dedicated gripper bus.
+firmware collision sensitivity, dedicated gripper bus.
 
 ### Still open after 0.2.0
 
@@ -334,3 +342,4 @@ firmware collision sensitivity, hardware variant detection, dedicated gripper bu
   manual mode. Everything in 0.2.0 was tested against the in-memory fake only.
 - Measuring the setpoint rate the 921600-baud bridge sustains and adjusting the `move_hz` default.
 - An upstream Python SDK change so the servicer swap can be removed.
+- Hardware variant detection: `variant` is set by hand today, and discovery finds DM boards only.
