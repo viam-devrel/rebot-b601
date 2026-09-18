@@ -41,8 +41,8 @@ DEFAULT_MIT_KP = [45.0, 45.0, 45.0, 8.0, 9.0, 8.0]
 DEFAULT_MIT_KD = [12.0, 12.0, 12.0, 1.0, 1.0, 1.0]
 # Soft limits (deg); slightly inside the URDF limits by default.
 DEFAULT_JOINT_LIMITS = [(-150.0, 150.0), (-179.0, 1.0), (-179.0, 1.0), (-107.0, 89.0), (-89.0, 89.0), (-179.0, 179.0)]
-VARIANTS = ("dm", "rs")
 VARIANT_VENDOR = {"dm": "damiao", "rs": "robstride"}
+VARIANTS = tuple(VARIANT_VENDOR)
 # B601-RS: Seeed's RobStride reference gains, and soft limits just inside the RS URDF
 # (joints 2 and 3 span 0..pi on that arm, the mirror of the DM arm).
 RS_MIT_KP = [50.0, 150.0, 150.0, 50.0, 50.0, 50.0]
@@ -109,6 +109,8 @@ class B601Arm(Arm, EasyResource):
         return self
 
     def _release_bus(self):
+        # Cached health was decoded with this bus's vendor; a new bus may not share it.
+        self._last_health.clear()
         bus, self.bus = self.bus, None
         if bus is not None:
             bus.remove_reconnect_callback(self._on_bus_reconnect)
@@ -187,6 +189,12 @@ class B601Arm(Arm, EasyResource):
         self.manual_kp = float(attrs.get("manual_mode_kp", 0.0))
         self.manual_kd = float(attrs.get("manual_mode_kd", DEFAULT_MANUAL_KD))
         self.gravity_scale = float(attrs.get("gravity_scale", 1.0))
+        if rs and self.gravity_scale != 0.0:
+            # spatial.py models the DM arm; the RS arm's axes differ, so the feed-forward
+            # would have the wrong sign. Manual mode stays available as pure damping.
+            if "gravity_scale" in attrs:
+                LOGGER.warning("gravity compensation is not modelled for the B601-RS yet; manual mode is damping only")
+            self.gravity_scale = 0.0
         self.payload_kg = float(attrs.get("payload_kg", 0.0))
         gv = attrs.get("gravity_vector", [0.0, 0.0, -spatial.GRAVITY_M_S2])
         self.gravity_vector = tuple(float(v) for v in gv)
@@ -316,7 +324,8 @@ class B601Arm(Arm, EasyResource):
         self._update_health(states)
         return positions
 
-    def _health(self, cid: int, state) -> JointHealth:
+    def _health(self, cid: int, state: Any) -> JointHealth:
+        """Decode with the bus vendor and cache it for the health report."""
         health = JointHealth.from_state(cid, state, self.bus.vendor)
         self._last_health[cid] = health
         return health
@@ -358,6 +367,7 @@ class B601Arm(Arm, EasyResource):
         """Decode motor faults before a move. Transient faults are cleared once;
         hard faults raise MotorFault; hot motors raise OverTemperatureError."""
         cleared = False
+        position_only: List[str] = []
         for i, cid in enumerate(ARM_CAN_IDS):
             s = states.get(cid)
             if s is None:
@@ -366,11 +376,7 @@ class B601Arm(Arm, EasyResource):
             if health.position_only:
                 # No status frame: fault and temperature are unknown, not zero. The move
                 # goes ahead on position alone; say so where the decision is made.
-                self._warn(
-                    f"posonly{cid}",
-                    "%s: no status frame; moving without fault/temperature/torque checks",
-                    JOINT_NAMES[i],
-                )
+                position_only.append(JOINT_NAMES[i])
                 continue
             if health.fault:
                 if health.transient and auto_clear:
@@ -386,6 +392,12 @@ class B601Arm(Arm, EasyResource):
                 )
             if max(health.t_mos_c, health.t_rotor_c) >= self.temp_warn_c:
                 self._warn(f"temp{cid}", "%s is warm: %.0f C", JOINT_NAMES[i], max(health.t_mos_c, health.t_rotor_c))
+        if position_only:
+            self._warn(
+                "posonly",
+                "moving without fault/temperature/torque checks on %s (no status frames)",
+                ", ".join(position_only),
+            )
         if cleared:
             time.sleep(_SETTLE_SEC)
             self._configure_motors()
@@ -421,7 +433,10 @@ class B601Arm(Arm, EasyResource):
                 continue
             health = self._health(cid, s)
             if health.position_only:
-                continue  # unknown, not zero; the trip counter is left alone like an absent state
+                # Defensive: the bus skips the mechPos fallback at retries=1, so such a
+                # state only reaches here if that policy changes. Unknown is not zero, so
+                # the trip counter is left alone, like an absent state.
+                continue
             monitored += 1
             if health.fault:
                 raise MotorFault(JOINT_NAMES[i], health, hint="move aborted")
@@ -438,7 +453,7 @@ class B601Arm(Arm, EasyResource):
                 else:
                     trip_counts[i] = 0
         if monitored == 0:
-            self._warn("unmonitored", "no status frames from any joint; torque and temperature monitoring is off")
+            self._warn("unmonitored", "no feedback from any joint; torque and temperature monitoring is off")
 
     # ------------------------------------------------------- move execution
 
@@ -638,6 +653,8 @@ class B601Arm(Arm, EasyResource):
                                 )
 
                     self._bus_call(_send)
+                else:
+                    self._warn("manual_nostate", "manual mode: no feedback from any joint; nothing is being commanded")
             except Exception:
                 self._warn(
                     "manual",
@@ -747,18 +764,17 @@ class B601Arm(Arm, EasyResource):
             elif name == "raw_state":
                 states = await asyncio.to_thread(self._read_states)
                 result[name] = {
-                    JOINT_NAMES[i]: (
-                        JointHealth.from_state(cid, s, self.bus.vendor).as_dict()
-                        if (s := states[cid]) is not None
-                        else None
-                    )
+                    JOINT_NAMES[i]: (self._health(cid, s).as_dict() if (s := states[cid]) is not None else None)
                     for i, cid in enumerate(ARM_CAN_IDS)
                 }
             elif name in ("get_state", "status", "health"):
                 result[name] = await asyncio.to_thread(self._health_report)
             elif name == "load":
                 states = await asyncio.to_thread(self._read_states)
-                result[name] = [states[c].torq if states[c] is not None else None for c in ARM_CAN_IDS]
+                result[name] = [
+                    states[c].torq if states[c] is not None and not getattr(states[c], "position_only", False) else None
+                    for c in ARM_CAN_IDS
+                ]
             elif name == "set_speed":
                 self.speeds = [
                     _clamp(v, MIN_SPEED_DEG_S, MAX_SPEED_DEG_S) for v in _as_list(arg, N_JOINTS, "set_speed")
@@ -782,6 +798,8 @@ class B601Arm(Arm, EasyResource):
                 else:
                     raise ValueError("'manual_mode' must be 'enter' or 'exit'")
             elif name == "gravity_torques":
+                if self.variant == "rs":
+                    raise NotImplementedError("gravity torques are not modelled for the B601-RS yet")
                 positions = await asyncio.to_thread(self._read_positions_deg)
                 result[name] = self.manual_torques(positions)
             else:

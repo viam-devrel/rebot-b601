@@ -255,3 +255,54 @@ def test_gripper_refuses_to_attach_to_an_rs_arm(factory):
     with pytest.raises(ValueError, match="not supported on the B601-RS"):
         B601Gripper.new(make_config("gripper", arm="arm"), deps)
     assert arm.bus.controller is not None  # the arm's bus is untouched by the failed gripper build
+
+
+def test_rs_attributes_still_override_the_defaults(factory):
+    arm = B601Arm.new(make_config("arm", **dict(RS, mit_kp=[1, 2, 3, 4, 5, 6], joint_limits_deg=[[-10, 10]] * 6)), {})
+    assert arm.mit_kp == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    assert arm.joint_limits == [(-10.0, 10.0)] * 6
+
+
+def test_reconnect_reenables_active_report_on_rs(factory):
+    arm = B601Arm.new(make_config("arm", **RS), {})
+    for cid in ARM_CAN_IDS:
+        factory.latest.motors[cid].active_report = False
+    factory.persist(factory.latest)
+    arm.bus.reconnect()
+    assert all(factory.latest.motors[cid].active_report for cid in ARM_CAN_IDS)
+    assert arm._torque_enabled
+
+
+def test_monitor_tick_ignores_position_only_states_directly(factory, monkeypatch):
+    arm = B601Arm.new(make_config("arm", **dict(RS, torque_limit_nm=1.0, temperature_limit_c=50.0)), {})
+    monkeypatch.setattr(
+        arm,
+        "_read_states",
+        lambda retries=1: {
+            cid: bus_mod.PositionOnlyState(
+                can_id=cid, arbitration_id=0xFD, status_code=0, pos=0.0, vel=0.0, torq=5.0, t_mos=99.0, t_rotor=0.0
+            )
+            for cid in ARM_CAN_IDS
+        },
+    )
+    trip_counts = [2] * 6
+    arm._monitor_tick(trip_counts)
+    assert trip_counts == [2] * 6
+
+
+async def test_rs_manual_mode_has_no_gravity_feedforward(factory):
+    arm = B601Arm.new(make_config("arm", **dict(RS, gravity_scale=1.0)), {})
+    assert arm.gravity_scale == 0.0
+    assert arm.manual_torques([0.0] * 6) == [0.0] * 6
+    with pytest.raises(NotImplementedError):
+        await arm.do_command({"gravity_torques": True})
+    dm = B601Arm.new(make_config("dm", **dict(FAST, gravity_scale=0.5)), {})
+    assert dm.gravity_scale == 0.5
+
+
+async def test_raw_state_on_rs_reports_health_dicts(factory):
+    arm = B601Arm.new(make_config("arm", **RS), {})
+    r = await arm.do_command({"raw_state": True})
+    for name in ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6"):
+        assert r["raw_state"][name]["position_only"] is False
+        assert r["raw_state"][name]["status"] == "ok"
