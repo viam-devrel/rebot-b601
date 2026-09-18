@@ -1,8 +1,9 @@
 """Hardware smoke test for the B601 (DM or RS).
 
 Read-only by default: prints joint state (and, for DM, forward kinematics) and never
-enables torque. With --move it enables torque, nudges joint 6 by +5 deg and back, and
-stops. The move step is refused by the arm itself if any motor reports a fault.
+enables torque. With --move it nudges joint 6 by +5 deg and back, then stops; torque is
+enabled only after you confirm at an explicit prompt, and the move is refused with the
+arm's own message if any motor reports a fault, a collision or an over-temperature.
 
 Run:
   .venv/bin/python tests/smoke_hardware.py                          # DM, port auto-detected
@@ -22,18 +23,23 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.rebot_b601 import spatial  # noqa: E402
 from src.rebot_b601.arm import VARIANT_VENDOR  # noqa: E402
-from src.rebot_b601.bus import SharedBus, detect_port  # noqa: E402
+from src.rebot_b601.bus import BusError, SharedBus, detect_port  # noqa: E402
 from src.rebot_b601.damiao import JointHealth  # noqa: E402
 
 NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "gripper"]
 
-ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+# allow_abbrev=False: without it "--m"/"--mo"/"--mov" all mean --move and would move the arm.
+ap = argparse.ArgumentParser(
+    description=__doc__, allow_abbrev=False, formatter_class=argparse.RawDescriptionHelpFormatter
+)
 ap.add_argument("port_pos", nargs="?", metavar="port", help="serial device (dm) or CAN channel (rs)")
 ap.add_argument("--port", help="same as the positional port")
 ap.add_argument("--variant", choices=("dm", "rs"), default="dm")
 ap.add_argument("--move", action="store_true", help="enable torque and nudge joint 6 by 5 deg (MOVES THE ARM)")
 args = ap.parse_args()
 
+if args.port and args.port_pos and args.port != args.port_pos:
+    ap.error("port given twice with different values")
 port = args.port or args.port_pos
 if not port:
     if args.variant == "rs":
@@ -51,17 +57,25 @@ def show(bus) -> list:
             print(f"  {NAMES[i]} (0x{cid:02x}): NO FEEDBACK")
             continue
         h = JointHealth.from_state(cid, s, vendor)
-        print(
-            f"  {NAMES[i]} (0x{cid:02x}): pos={h.pos_deg:8.2f} deg  vel={h.vel_rad_s:6.3f} rad/s  "
-            f"torq={h.torque_nm:6.3f} Nm  t_mos={h.t_mos_c:.0f}C  status={h.status}"
-        )
+        if h.position_only:
+            # vel/torq/t_mos are placeholder zeros here, not measurements: don't print them.
+            print(f"  {NAMES[i]} (0x{cid:02x}): pos={h.pos_deg:8.2f} deg  ({h.status})")
+        else:
+            print(
+                f"  {NAMES[i]} (0x{cid:02x}): pos={h.pos_deg:8.2f} deg  vel={h.vel_rad_s:6.3f} rad/s  "
+                f"torq={h.torque_nm:6.3f} Nm  t_mos={h.t_mos_c:.0f}C  status={h.status}"
+            )
         if i < 6:
             positions.append(h.pos_deg)
     return positions
 
 
 print(f"connecting to {port} ({args.variant}, {vendor}) ...")
-bus = SharedBus.acquire(port, vendor=vendor)
+try:
+    bus = SharedBus.acquire(port, vendor=vendor)
+except BusError as e:
+    print(f"cannot open {port}: {e}")
+    sys.exit(1)
 positions = show(bus)
 if args.variant == "dm" and len(positions) == 6:
     x, y, z, ox, oy, oz, theta = spatial.end_position(positions)
@@ -74,24 +88,29 @@ elif args.variant == "rs":
     # this check works with torque off.
     input("\nstaleness check: torque is off; move any joint by hand a little, then press Enter ... ")
     show(bus)
-bus.release()
 
 if not args.move:
+    bus.release()
     print("done (torque untouched)")
     sys.exit(0)
+
+# Keep the bus held across the move: the arm acquires the same port/baud/vendor and so
+# reuses this cached instance instead of closing and reopening the CAN channel.
+input("\n--move: the arm will now enable torque and move joint 6. Enter to continue, Ctrl-C to abort ... ")
 
 from viam.proto.app.robot import ComponentConfig  # noqa: E402
 from viam.proto.component.arm import JointPositions  # noqa: E402
 from viam.utils import dict_to_struct  # noqa: E402
 
 from src.rebot_b601.arm import B601Arm  # noqa: E402
+from src.rebot_b601.damiao import CollisionError, MotorFault, OverTemperatureError  # noqa: E402
 
 attrs = {"variant": args.variant, "port": port, "speed_deg_s": 20}
 arm = B601Arm.new(ComponentConfig(name="smoke", attributes=dict_to_struct(attrs)), {})
 
 
 async def nudge():
-    print("\nhealth:", arm._health_report())
+    print("\nhealth before:", arm._health_report())
     start = list((await arm.get_joint_positions()).values)
     target = list(start)
     target[5] += 5.0
@@ -100,8 +119,15 @@ async def nudge():
     await arm.move_to_joint_positions(JointPositions(values=start))
     await arm.stop()
     print("after:", [round(v, 2) for v in (await arm.get_joint_positions()).values])
-    await arm.close()
+    print("health after (holding against gravity):", arm._health_report())
 
 
-asyncio.run(nudge())
+try:
+    asyncio.run(nudge())
+except (MotorFault, CollisionError, OverTemperatureError) as e:
+    print(f"\nREFUSED: {e}")
+    sys.exit(1)
+finally:
+    asyncio.run(arm.close())
+    bus.release()
 print("done")
