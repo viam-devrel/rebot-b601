@@ -22,6 +22,8 @@
 - Kinematics, `get_end_position`, motion-service moves, gravity compensation, the gripper, and discovery
   remain DM-only. The gripper refuses to attach to an RS arm.
 - `torque_limit_nm` and the `load` command are unverified: RobStride status frames read zero torque at idle.
+- `is_moving` on RS reflects only this module's own moves: the status-frame velocity is not a measurement
+  (a resting motor reported -0.15 rad/s on the bench), so the velocity check is disabled.
 
 ## 0.3.2 (2026-09-09)
 

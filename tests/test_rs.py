@@ -156,7 +156,7 @@ def test_rs_variant_builds_a_robstride_arm_with_active_report(factory):
         (-89.0, 89.0),
         (-179.0, 179.0),
     ]
-    assert arm.moving_vel_rad_s == 0.15
+    assert arm.moving_vel_rad_s == math.inf  # RS status-frame velocity is not trusted
 
 
 def test_dm_defaults_are_unchanged(factory):

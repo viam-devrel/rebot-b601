@@ -57,7 +57,10 @@ DEFAULT_MANUAL_HZ = 50.0
 _ENSURE_MODE_RETRIES = 9
 _SETTLE_SEC = 0.02
 _MOVING_VEL_RAD_S = 0.05
-_RS_MOVING_VEL_RAD_S = 0.15  # RobStride status-frame velocity is ~0.05 rad/s noise at rest
+# RobStride status-frame velocity is not a usable measurement (bench 2026-09-18: a motor at rest
+# reported -0.150 rad/s, identical across polls), so on RS is_moving reflects only this module's
+# own moves. Seeed's notes say the same of the mechVel parameter.
+_RS_MOVING_VEL_RAD_S = math.inf
 _DEFAULT_TOLERANCE_DEG = 2.0
 _SETTLE_POLL_SEC = 0.05
 _POST_STREAM_SETTLE_S = 2.0  # the last setpoint is the target; the arm only needs to close the tracking gap

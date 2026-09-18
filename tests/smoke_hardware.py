@@ -17,6 +17,7 @@ DYLD_LIBRARY_PATH=/usr/local/lib (run.sh exports it for the module itself).
 import argparse
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -73,6 +74,12 @@ try:
 except BusError as e:
     print(f"cannot open {port}: {e}")
     sys.exit(1)
+if vendor == "robstride":
+    # Ask the motors to stream status (a comms setting, not torque) so faults and
+    # temperatures show up here too; without it every row is "position only".
+    for cid in range(1, 8):
+        bus.motor(cid).robstride_set_active_report(True)
+    time.sleep(0.3)
 positions = show(bus)
 if args.variant == "dm" and len(positions) == 6:
     x, y, z, ox, oy, oz, theta = spatial.end_position(positions)

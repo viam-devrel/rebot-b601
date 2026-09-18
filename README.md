@@ -143,7 +143,10 @@ Safety and Troubleshooting).
   even though the Python SDK's stock arm servicer does not.
 - Streamed trajectories (`MoveThroughJointPositionsStreamed`) are paced by each point's timestamp.
 - `stop()` cancels any in-flight move within one setpoint tick and holds the current position.
-- A new move cancels a running one. `is_moving` is true while a move or stream is in flight.
+- A new move cancels a running one. `is_moving` is true while a move or stream is in flight. On the DM arm it
+  also reports motion the module did not command (a joint moving faster than 0.05 rad/s); on RS the
+  status-frame velocity is not a measurement (a motor at rest reported -0.15 rad/s on the bench), so
+  `is_moving` reflects only this module's own moves.
 
 ## Safety and diagnostics
 
