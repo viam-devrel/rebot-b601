@@ -1,4 +1,4 @@
-"""Shared access to the B601's USB-CAN serial bridge.
+"""Shared access to the B601's CAN bus (a USB serial bridge, or a CAN channel).
 
 The arm (motors 0x01-0x06) and the gripper (motor 0x07) live on the same CAN
 bus behind one serial device, but are separate Viam components. This module
@@ -13,7 +13,9 @@ Serial-lock hygiene (a field incident: a module process refused its own port
 for days):
 
 * buses are cached by the *resolved* device path, so ``/dev/ttyACM0`` and its
-  ``/dev/serial/by-id/...`` symlink never open the same device twice;
+  ``/dev/serial/by-id/...`` symlink never open the same device twice (a CAN
+  channel name such as ``can0`` or ``PCAN_USBBUS1`` is not a path, so it is
+  cached verbatim);
 * every controller has a finalizer, so a bus that is dropped without
   ``release()`` still closes its descriptor (motorbridge itself has none);
 * when the OS refuses the exclusive lock, the error names the holder. If the
@@ -163,19 +165,23 @@ def detect_port() -> str:
     )
 
 
+def is_serial_port(port: str) -> bool:
+    """True for a serial device (the Damiao USB bridge): any absolute path.
+
+    CAN channel names (``can0``, ``PCAN_USBBUS1``) are not paths, so anything
+    that does not start with "/" is a CAN channel.
+    """
+    return port.startswith("/")
+
+
 def canonical_device(port: str) -> str:
     """Resolve symlinks so every alias of a serial device maps to one bus.
 
-    CAN channel names (``can0``, ``PCAN_USBBUS1``) are not paths and are used as-is.
+    CAN channel names are not paths and are used as-is.
     """
-    if not port.startswith("/"):
+    if not is_serial_port(port):
         return port
     return os.path.realpath(port)
-
-
-def is_serial_port(port: str) -> bool:
-    """True for the Damiao USB serial bridge; anything else is a CAN channel."""
-    return port.startswith("/dev/")
 
 
 def _open_controller(port: str, baud: int):
@@ -305,7 +311,11 @@ def describe_holders(device: str) -> str:
 
 
 class SharedBus:
-    """One motorbridge Controller per serial port, shared across components."""
+    """One motorbridge Controller per port, shared across components.
+
+    A port is either a serial device (cached by its resolved path) or a CAN
+    channel name such as ``can0``/``PCAN_USBBUS1`` (cached verbatim).
+    """
 
     _instances: Dict[str, "SharedBus"] = {}
     _instances_lock = threading.Lock()
@@ -464,13 +474,11 @@ class SharedBus:
                 raise BusError(f"{self.port} is not open")
             m = self._motors.get(can_id)
             if m is None:
+                model = MOTOR_MODELS[self.vendor][can_id]
                 if self.vendor == "robstride":
-                    model = MOTOR_MODELS["robstride"][can_id]
                     m = self.controller.add_robstride_motor(can_id, ROBSTRIDE_HOST_ID, model)
                 else:
-                    m = self.controller.add_damiao_motor(
-                        can_id, can_id + FEEDBACK_ID_OFFSET, MOTOR_MODELS["damiao"][can_id]
-                    )
+                    m = self.controller.add_damiao_motor(can_id, can_id + FEEDBACK_ID_OFFSET, model)
                 self._motors[can_id] = m
             return m
 

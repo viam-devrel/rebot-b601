@@ -54,3 +54,18 @@ def test_vendor_mismatch_on_shared_channel_is_an_error(factory):
     assert not bus.matches("can0", bus.baud, "damiao")
     assert bus.matches("can0", bus.baud, "robstride")
     bus.release()
+
+
+def test_unknown_vendor_is_rejected(factory):
+    # "can1" is not cached, so the constructor's guard fires, not the mismatch branch.
+    with pytest.raises(BusError, match="unknown motor vendor"):
+        SharedBus.acquire("can1", vendor="robstide")
+
+
+def test_can_channel_acquires_share_one_controller(factory):
+    a = SharedBus.acquire("can0", vendor="robstride")
+    b = SharedBus.acquire("can0", vendor="robstride")
+    assert a is b
+    assert len(factory.controllers) == 1
+    a.release()
+    b.release()
