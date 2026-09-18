@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from motorbridge import Controller
+from motorbridge.models import MotorState
 from viam.logging import getLogger
 
 LOGGER = getLogger(__name__)
@@ -53,6 +54,8 @@ MOTOR_MODELS = {
 }
 FEEDBACK_ID_OFFSET = 0x10  # Damiao: motor 0x01 replies on 0x11, etc.
 ROBSTRIDE_HOST_ID = 0xFD  # RobStride: every motor addresses the host as 0xFD
+RID_ROBSTRIDE_MECH_POS = 0x7019  # RobStride mechPos parameter, rad
+_FALLBACK_WARN_INTERVAL_S = 30.0
 
 DEFAULT_BAUD = 921600
 
@@ -336,6 +339,7 @@ class SharedBus:
         self._refcount = 0
         self._reconnect_callbacks: List[Callable[[], None]] = []
         self.reconnects = 0
+        self._last_fallback_warn = 0.0
         self._open()
 
     # ----------------------------------------------------------- open/close
@@ -511,4 +515,36 @@ class SharedBus:
                     break
                 if attempt + 1 < retries:
                     time.sleep(settle_s)
+            if self.vendor == "robstride":
+                self._fill_from_mechpos(motors, states)
             return states
+
+    def _fill_from_mechpos(self, motors: dict, states: dict) -> None:
+        """RobStride motors stream status frames only with active report on. When a
+        motor has not filled get_state(), read its mechPos parameter directly, as
+        Seeed's reference stack does. Velocity, torque and temperature are unknown
+        on this path and read as zero."""
+        missing = [cid for cid, s in states.items() if s is None]
+        for cid in missing:
+            try:
+                pos = motors[cid].robstride_get_param_f32(RID_ROBSTRIDE_MECH_POS)
+            except Exception:
+                continue  # left None; callers already handle gaps
+            states[cid] = MotorState(
+                can_id=cid,
+                arbitration_id=ROBSTRIDE_HOST_ID,
+                status_code=0,
+                pos=float(pos),
+                vel=0.0,
+                torq=0.0,
+                t_mos=0.0,
+                t_rotor=0.0,
+            )
+        if missing:
+            now = time.monotonic()
+            if now - self._last_fallback_warn >= _FALLBACK_WARN_INTERVAL_S:
+                self._last_fallback_warn = now
+                LOGGER.warning(
+                    "no status frames from motor(s) %s; read mechPos directly (is active report on?)",
+                    ", ".join(f"0x{c:02x}" for c in missing),
+                )

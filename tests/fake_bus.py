@@ -46,6 +46,8 @@ class FakeMotor:
         # ensure_mode times out (CallError, like a real motor busy after enable) this many times first
         self.mode_timeouts = FakeMotor.default_mode_timeouts
         self.closed = False  # motorbridge.Motor.close() was called (frees the handle's bus reference)
+        self.active_report = False  # RobStride: status frames stream only when this is on
+        self.stream_state = True  # False: get_state() never fills, only param reads work
 
     # --- motorbridge.Motor API ---
     def close(self):
@@ -94,7 +96,7 @@ class FakeMotor:
         self._requested = True
 
     def get_state(self):
-        if not self._requested:
+        if not self.stream_state or not self._requested:
             return None
         self._requested = False
         return MotorState(
@@ -124,6 +126,17 @@ class FakeMotor:
 
     def set_can_timeout_ms(self, ms):
         self.can_timeout_ms = ms
+
+    def robstride_set_active_report(self, enabled: bool):
+        self.controller._check_link()
+        self.active_report = bool(enabled)
+
+    def robstride_get_param_f32(self, param_id: int, timeout_ms: int = 1000) -> float:
+        self.controller._check_link()
+        if param_id == 0x7019:  # mechPos, rad
+            self.step()
+            return self.pos
+        raise CallError(f"param 0x{param_id:04x} read timed out")
 
     # --- simulation ---
     def step(self):

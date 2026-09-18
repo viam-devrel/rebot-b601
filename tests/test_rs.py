@@ -1,5 +1,7 @@
 """B601-RS (RobStride over CAN) behaviour. DM behaviour is covered by the other test files."""
 
+import math
+
 import pytest
 
 from src.rebot_b601 import bus as bus_mod
@@ -69,3 +71,36 @@ def test_can_channel_acquires_share_one_controller(factory):
     assert len(factory.controllers) == 1
     a.release()
     b.release()
+
+
+def test_poll_feedback_falls_back_to_mechpos_when_nothing_streams(factory):
+    bus = SharedBus.acquire("can0", vendor="robstride")
+    for cid in range(1, 8):
+        m = bus.motor(cid)
+        m.stream_state = False
+        m.pos = math.radians(10.0 * cid)
+    states = bus.poll_feedback([1, 2, 3], retries=2, settle_s=0.0)
+    assert [round(math.degrees(states[c].pos), 3) for c in (1, 2, 3)] == [10.0, 20.0, 30.0]
+    assert states[1].status_code == 0 and states[1].vel == 0.0 and states[1].torq == 0.0
+    bus.release()
+
+
+def test_poll_feedback_leaves_none_when_param_read_fails_too(factory):
+    bus = SharedBus.acquire("can0", vendor="robstride")
+    m = bus.motor(1)
+    m.stream_state = False
+
+    def boom(param_id, timeout_ms=1000):
+        raise bus_mod._CallError("param read timed out")
+
+    m.robstride_get_param_f32 = boom
+    assert bus.poll_feedback([1], retries=1, settle_s=0.0)[1] is None
+    bus.release()
+
+
+def test_damiao_bus_never_reads_robstride_params(factory):
+    bus = SharedBus.acquire("/dev/fake0")
+    m = bus.motor(1)
+    m.stream_state = False
+    assert bus.poll_feedback([1], retries=1, settle_s=0.0)[1] is None
+    bus.release()
