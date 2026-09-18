@@ -1,2 +1,2 @@
 viam-sdk>=0.80.0
-motorbridge>=0.5.2
+motorbridge>=0.5.5

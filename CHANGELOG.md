@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0 (2026-09-18)
+
+### Added
+- `variant: "rs"` on the arm drives the reBot Arm **B601-RS** (RobStride rs-06/rs-00 motors over CAN):
+  joint reading, joint moves, streamed trajectories, stop, torque enable/disable, damping-only manual mode,
+  health with RobStride fault names. `port` is the CAN channel (`can0` on Linux SocketCAN, `can0` or
+  `PCAN_USBBUS1` on macOS PCAN). RS defaults: Seeed's MIT gains, RS soft joint limits, RobStride active status
+  reporting, mechPos parameter reads when no status frame arrives (joints then report `position_only`),
+  a 0.15 rad/s `is_moving` threshold.
+- `run.sh` exports `DYLD_LIBRARY_PATH=/usr/local/lib` on macOS when the MacCAN runtime is installed.
+- `tests/smoke_hardware.py --variant rs --port can0 [--move]`; the move step is gated behind an explicit
+  Enter and refuses on any motor fault.
+
+### Changed
+- `raw_state` returns the same per-joint dict as the health report (superset of the old keys: adds
+  `can_id`, `status_code`, `fault`, `position_only`). `load` returns null for a joint known only by position.
+- A move whose monitor gets no feedback from any joint now logs a warning instead of staying silent (DM too).
+
+### Not yet on RS
+- Kinematics, `get_end_position`, motion-service moves, gravity compensation, the gripper, and discovery
+  remain DM-only. The gripper refuses to attach to an RS arm.
+- `torque_limit_nm` and the `load` command are unverified: RobStride status frames read zero torque at idle.
+
 ## 0.3.2 (2026-09-09)
 
 ### Fixed
