@@ -18,11 +18,12 @@ from motorbridge.models import MotorState
 class FakeMotor:
     default_mode_timeouts = 0  # tests set this before motors are created (they are created lazily)
 
-    def __init__(self, controller: "FakeController", can_id: int, feedback_id: int, model: str):
+    def __init__(self, controller: "FakeController", can_id: int, feedback_id: int, model: str, vendor: str = "damiao"):
         self.controller = controller
         self.can_id = can_id
         self.feedback_id = feedback_id
         self.model = model
+        self.vendor = vendor
         self.pos = 0.0  # rad
         self.vel = 0.0  # rad/s
         self.torq = 0.0
@@ -45,6 +46,10 @@ class FakeMotor:
         # ensure_mode times out (CallError, like a real motor busy after enable) this many times first
         self.mode_timeouts = FakeMotor.default_mode_timeouts
         self.closed = False  # motorbridge.Motor.close() was called (frees the handle's bus reference)
+        self.active_report = False  # RobStride: status frames stream only when this is on
+        self.stream_state = True  # False: get_state() never fills, only param reads work
+        self.param_reads = 0
+        self._frozen = None  # RobStride: the last frame, served after disable() like the real cache
 
     # --- motorbridge.Motor API ---
     def close(self):
@@ -53,14 +58,18 @@ class FakeMotor:
     def enable(self):
         self.controller._check_link()
         self.enabled = True
-        if self.status_code == 0x0:
-            self.status_code = 0x1
+        if self.vendor == "damiao" and self.status_code == 0x0:
+            self.status_code = 0x1  # Damiao reports "enabled"; RobStride's field is fault bits, 0 = healthy
 
     def disable(self):
         self.controller._check_link()
         self.enabled = False
         self.status_code = 0x0
         self.target = None
+        if self.vendor == "robstride":
+            # Bench 2026-09-18: a stopped RobStride motor stops streaming status frames and
+            # motorbridge keeps serving the last one, so get_state() freezes here.
+            self._frozen = self._state()
 
     def ensure_mode(self, mode):
         self.controller._check_link()
@@ -93,9 +102,20 @@ class FakeMotor:
         self._requested = True
 
     def get_state(self):
+        if not self.stream_state:
+            return None
+        if self.vendor == "robstride":
+            # Real RobStride motors ignore request_feedback(); state arrives only as
+            # streamed status frames, which need active report on and the motor running.
+            if not self.enabled and self._frozen is not None:
+                return self._frozen
+            return self._state() if self.active_report else None
         if not self._requested:
             return None
         self._requested = False
+        return self._state()
+
+    def _state(self):
         return MotorState(
             can_id=self.can_id,
             arbitration_id=self.feedback_id,
@@ -116,11 +136,25 @@ class FakeMotor:
     def clear_error(self):
         self.controller._check_link()
         self.errors_cleared += 1
-        if self.status_code >= 0x8:
+        if self.vendor == "robstride":
+            self.status_code = 0x0
+        elif self.status_code >= 0x8:
             self.status_code = 0x1 if self.enabled else 0x0
 
     def set_can_timeout_ms(self, ms):
         self.can_timeout_ms = ms
+
+    def robstride_set_active_report(self, enabled: bool):
+        self.controller._check_link()
+        self.active_report = bool(enabled)
+
+    def robstride_get_param_f32(self, param_id: int, timeout_ms: int = 1000) -> float:
+        self.controller._check_link()
+        self.param_reads += 1
+        if param_id == 0x7019:  # mechPos, rad
+            self.step()
+            return self.pos
+        raise CallError(f"param 0x{param_id:04x} read timed out")
 
     # --- simulation ---
     def step(self):
@@ -172,6 +206,14 @@ class FakeController:
         m = self.motors.get(motor_id)
         if m is None:
             m = FakeMotor(self, motor_id, feedback_id, model)
+            self.motors[motor_id] = m
+        return m
+
+    def add_robstride_motor(self, motor_id: int, feedback_id: int, model: str) -> FakeMotor:
+        self._check_link()
+        m = self.motors.get(motor_id)
+        if m is None:
+            m = FakeMotor(self, motor_id, feedback_id, model, vendor="robstride")
             self.motors[motor_id] = m
         return m
 

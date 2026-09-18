@@ -1,6 +1,6 @@
 # rebot-b601
 
-A [Viam](https://www.viam.com) module for the [Seeed Studio reBot Arm B601-DM](https://github.com/Seeed-Projects/reBot-DevArm), a 6 DoF robotic arm with Damiao CAN motors plus a parallel gripper. Talks to the arm through its USB-CAN serial bridge using Seeed's [motorbridge](https://motorbridge.seeedstudio.com) SDK.
+A [Viam](https://www.viam.com) module for the [Seeed Studio reBot Arm B601](https://github.com/Seeed-Projects/reBot-DevArm), a 6 DoF robotic arm plus a parallel gripper, using Seeed's [motorbridge](https://motorbridge.seeedstudio.com) SDK. It drives both variants: the **B601-DM** (Damiao motors behind a USB-CAN serial bridge, the default) and the **B601-RS** (RobStride motors on plain CAN, `variant: "rs"`).
 
 ## Models
 
@@ -9,15 +9,18 @@ A [Viam](https://www.viam.com) module for the [Seeed Studio reBot Arm B601-DM](h
 | `devrel:rebot-b601:arm` | `rdk:component:arm` | The 6 arm joints (CAN IDs `0x01`–`0x06`) |
 | `devrel:rebot-b601:gripper` | `rdk:component:gripper` | The parallel gripper (CAN ID `0x07`) |
 
-Both components share one serial connection; the module multiplexes them onto the same bus.
+On the DM arm both components share one serial connection; the module multiplexes them onto the same bus.
 
 ## Prerequisites
 
-- The arm's USB-CAN board plugged into the machine. It enumerates as an `HDSC CDC Device` (USB `2e88:4603`) and is
-  found by that identity, never by guessing a `/dev/ttyACM*` number.
-- Serial-port access for the viam-server user: `sudo usermod -aG dialout $USER` (then re-login), or a udev rule.
+- **B601-DM:** the arm's USB-CAN board plugged into the machine. It enumerates as an `HDSC CDC Device`
+  (USB `2e88:4603`) and is found by that identity, never by guessing a `/dev/ttyACM*` number.
+- **B601-DM:** serial-port access for the viam-server user: `sudo usermod -aG dialout $USER` (then re-login),
+  or a udev rule.
 - The arm **zeroed** (see Calibration below). Joint angles are relative to the motors' stored zero position.
 - `uv` or `python3 -m venv` on the machine; `run.sh` bootstraps a virtualenv on first start.
+- **B601-RS:** plain CAN at 1 Mbps instead of serial. `port` is the CAN channel and is required; `baud` is
+  ignored and `can_timeout_ms` is rejected. Bringing the interface up: see B601-RS below.
 
 ## Example configuration
 
@@ -48,34 +51,67 @@ Both components share one serial connection; the module multiplexes them onto th
 
 The gripper's frame origin is the arm's end link (the gripper mount), so a zero translation is correct. The arm's kinematics stop at the mount; the gripper component supplies the gripper body and finger geometry.
 
+B601-RS arm on a CAN interface:
+
+```json
+{ "name": "arm", "model": "devrel:rebot-b601:arm", "type": "arm",
+  "attributes": { "variant": "rs", "port": "can0", "control_mode": "mit" } }
+```
+
+### B601-RS
+
+The RS arm is six RobStride motors on plain CAN at 1 Mbps (rs-06 for joints 1–3, rs-00 for joints 4–6),
+addressed by the module as host id `0xFD`. Seeed run the RS arm in MIT mode, and on the bench `pos_vel` with the motors' stored gains stopped about 3° short of its targets ("move timed out" warnings). On RS each `pos_vel` setpoint
+costs two parameter writes per joint, so `control_mode: "mit"` is usually the better default although
+`pos_vel` remains the module's.
+
+On Linux a CANable/candleLight adapter shows up as SocketCAN: bring it up with
+`sudo ip link set can0 type can bitrate 1000000 && sudo ip link set can0 up`, then set `"port": "can0"`.
+On macOS a PEAK PCAN-USB goes through motorbridge's PCAN backend, which dlopens the MacCAN PCBUSB runtime by
+bare name; install it so `libPCBUSB.dylib` sits in `/usr/local/lib` (`run.sh` exports `DYLD_LIBRARY_PATH`
+pointing there) and set `"port": "can0"` or `"PCAN_USBBUS1"`. macOS strips `DYLD_LIBRARY_PATH` when it execs
+a SIP-protected binary, so the venv must come from `uv` (which `run.sh` prefers) or another non-system
+Python; one built from `/usr/bin/python3` drops the export and motorbridge reports `load PCBUSB failed`.
+
+Not on RS yet: support covers joint reading and control only. `get_end_position`, `get_kinematics`,
+`get_geometries`, `get_3d_models`, and `move_to_position` describe the DM arm (the served URDF does carry the RS
+joint limits, so joint moves through viam-server are accepted), the gripper component refuses
+to attach to an RS arm, and discovery finds DM boards only. Manual mode is damping only, since gravity
+compensation uses the DM arm's mass model: `gravity_scale` is forced to 0 and `gravity_torques` refuses.
+Joint positions still work when the motors send no status frames (they are read as parameters), including
+with torque off, when stopped RobStride motors stop streaming and would otherwise report a frozen frame; the health
+report then shows `position_only: true` and the arm moves without fault, temperature or torque checks (see
+Safety and Troubleshooting).
+
 ### Arm attributes
 
 | Attribute | Type | Default | Description |
 |---|---|---|---|
-| `port` | string | auto-detected | Serial device of the USB-CAN bridge |
-| `baud` | int | `921600` | Serial baud rate |
+| `variant` | string | `"dm"` | `"dm"` for the B601-DM (Damiao motors, USB serial bridge) or `"rs"` for the B601-RS (RobStride motors, CAN). `"rs"` requires `port` |
+| `port` | string | auto-detected | Serial device of the USB-CAN bridge (dm), or the CAN channel such as `can0` or `PCAN_USBBUS1` (rs) |
+| `baud` | int | `921600` | Serial baud rate (dm; ignored on rs) |
 | `control_mode` | string | `"pos_vel"` | `"pos_vel"` (velocity-capped position) or `"mit"` (impedance) |
 | `speed_deg_s` | number or [6] | `60` | Max joint speed, deg/s (clamped to 1–180) |
 | `acceleration_deg_s2` | number or [6] | `200` | Max joint acceleration, deg/s² (clamped to 1–1000) |
 | `move_hz` | number | `50` | Setpoint streaming rate for interpolated moves |
-| `mit_kp` / `mit_kd` | number or [6] | Seeed defaults | MIT-mode gains |
-| `joint_limits_deg` | [6][2] | conservative defaults | Soft limits. Targets outside them are **rejected** |
+| `mit_kp` / `mit_kd` | number or [6] | Seeed defaults, per variant | MIT-mode gains |
+| `joint_limits_deg` | [6][2] | conservative defaults, per variant | Soft limits. Targets outside them are **rejected**. The RS URDF mirrors DM on joints 2 and 3, which span 0–180° there (folding reads positive); the RS default lower edge is -5° because an arm whose zero is a degree off rests slightly negative |
 | `clip_targets` | bool | `false` | Clip out-of-limit targets (with a warning) instead of rejecting them |
 | `bad_joints` | [int] | `[]` | Joint indices (0–5) to hold at their current position; excluded from targets and limit checks |
 | `tolerance_deg` | number | `2.0` | Settle tolerance for blocking moves |
 | `motion` | string | unset | Name of a motion service (usually `"builtin"`) used by `move_to_position` |
 | `collision_geometry` | string | `"primitives"` | Collision bodies in the served URDF: `"primitives"` (one box per link), `"meshes"` (decimated vendor STLs), or `"none"` |
 | `include_gripper_geometry` | bool | `false` | Attach the gripper-base box to the arm's end link. Leave off when the gripper component is configured, or the two will self-collide |
-| `torque_limit_nm` | number or [6] | unset | Software collision stop: abort and hold when a joint's measured torque exceeds this for `torque_trip_polls` consecutive polls |
+| `torque_limit_nm` | number or [6] | unset | Software collision stop: abort and hold when a joint's measured torque exceeds this for `torque_trip_polls` consecutive polls. Works on RS: a holding joint reports 1–2 Nm; torque reads 0 only while the motor is unpowered or known by position alone |
 | `torque_trip_polls` | int | `3` | Consecutive over-limit polls (at 10 Hz) that count as a collision |
 | `temperature_warn_c` | number | `60` | Log a warning when a motor is at or above this temperature |
 | `temperature_limit_c` | number | `80` | Refuse and abort moves when a motor is at or above this temperature |
-| `can_timeout_ms` | int | unset | Program the Damiao CAN watchdog so a motor disables itself if commands stop arriving |
-| `reconnect` | bool | `true` | Reopen the serial bridge and restore motor state after a link failure |
+| `can_timeout_ms` | int | unset | Program the Damiao CAN watchdog so a motor disables itself if commands stop arriving (dm; rejected on rs) |
+| `reconnect` | bool | `true` | Reopen the bus (serial bridge or CAN channel) and restore motor state after a link failure |
 | `enable_on_start` | bool | `true` | Enable torque when the component starts |
 | `disable_torque_on_close` | bool | `false` | Let the arm go limp when the component closes (it will slump under gravity!) |
 | `manual_mode_kp` / `manual_mode_kd` | number | `0` / `0.5` | MIT gains used in manual mode |
-| `gravity_scale` | number | `1.0` | Scale of the gravity-compensation feed-forward in manual mode (`0` disables it) |
+| `gravity_scale` | number | `1.0` | Scale of the gravity-compensation feed-forward in manual mode (`0` disables it). Ignored on RS (forced to 0; the mass model is the DM arm's) |
 | `payload_kg` | number | `0` | Extra mass at the end link for gravity compensation |
 | `gravity_vector` | [3] | `[0, 0, -9.81]` | Gravity in the arm's base frame, for non-upright mounts |
 
@@ -104,23 +140,29 @@ The gripper's frame origin is the arm's end link (the gripper mount), so a zero 
   or the per-joint lists), or `extra` keys `speed_d`/`speed_r`, `acceleration_d`/`acceleration_r`,
   `move_hz`, `direct` (send the final target only), `interpolate: false`, `waitAtEnd: false`.
 - `move_to_position` is delegated to the motion service named by `motion`; without it the call
-  fails with an explanation. The motion service plans against the URDF and collision geometry
+  fails with an explanation (DM only; the RS arm serves no kinematics). The motion service plans against the URDF and collision geometry
   from `get_kinematics` and executes through `MoveThroughJointPositions`, which this module serves
   even though the Python SDK's stock arm servicer does not.
 - Streamed trajectories (`MoveThroughJointPositionsStreamed`) are paced by each point's timestamp.
 - `stop()` cancels any in-flight move within one setpoint tick and holds the current position.
-- A new move cancels a running one. `is_moving` is true while a move or stream is in flight.
+- A new move cancels a running one. `is_moving` is true while a move or stream is in flight. On the DM arm it
+  also reports motion the module did not command (a joint moving faster than 0.05 rad/s); on RS the
+  status-frame velocity is not a measurement (a motor at rest reported -0.15 rad/s on the bench), so
+  `is_moving` reflects only this module's own moves.
 
 ## Safety and diagnostics
 
 - Before every move the module reads all six motors. A transient fault (communication loss) is
   cleared automatically; a hard fault (over-current, over-/under-voltage, over-temperature,
-  overload) rejects the move with the decoded reason. Fix the cause, then send
-  `{"clear_errors": true}`.
+  overload on DM; undervoltage, over-current, over-temperature, magnetic or HALL encoder fault,
+  not calibrated on RS) rejects the move with the decoded reason. Fix the cause, then send
+  `{"clear_errors": true}`. An RS arm that sends no status frames has nothing to check and moves
+  anyway (see B601-RS).
 - During a move it samples torque, status, and temperature at 10 Hz. A `torque_limit_nm` trip, a
   fault, or an over-temperature reading aborts the move and holds position.
-- If the serial bridge disappears mid-session, the module reopens it (with backoff), re-enables
-  the motors, and restores their control mode. Set `reconnect: false` to fail fast instead.
+- If the bus (serial bridge or CAN channel) disappears mid-session, the module reopens it (with
+  backoff), re-enables the motors, and restores their control mode. Set `reconnect: false` to fail
+  fast instead.
 - On startup the arm enables torque and holds its current position; it does not move until commanded.
 - Default speeds are gentle (60 deg/s). Keep the workspace clear the first time you command a move.
 
@@ -131,7 +173,7 @@ Arm:
 | Command | Effect |
 |---|---|
 | `{"status": true}` (also `get_state`, `health`) | Per-joint decoded status, position, velocity, torque, temperatures, plus manual-mode and torque flags |
-| `{"raw_state": true}` | Raw per-joint position/velocity/torque/temperature |
+| `{"raw_state": true}` | The same per-joint dict as the health report (position, velocity, torque, temperatures, `can_id`, `status_code`, `fault`, `position_only`) |
 | `{"load": true}` | Per-joint torque (Nm) |
 | `{"set_speed": 45}` / `{"set_acceleration": 300}` | Change the default speed / acceleration (number or list of 6) |
 | `{"get_speed": true}` / `{"get_acceleration": true}` | Read them back |
@@ -139,7 +181,11 @@ Arm:
 | `{"clear_errors": true}` (also `clear_error`) | Clear latched motor faults and re-enable |
 | `{"set_zero_position": true}` | Store the current pose as zero (see Calibration) |
 | `{"manual_mode": "enter"}` / `"exit"` (also `enter_manual_mode` / `exit_manual_mode`) | Teaching mode: MIT mode with damping and gravity compensation; servos stay on. **Experimental**, see below |
-| `{"gravity_torques": true}` | The feed-forward torques manual mode would apply at the current pose |
+| `{"gravity_torques": true}` | The feed-forward torques manual mode would apply at the current pose. Not available on RS |
+
+Each joint dict from `get_state` / `health` / `raw_state` carries `position_only`: true means the joint was read
+through its `mechPos` parameter rather than a status frame, so its velocity, torque, temperature and fault are
+unknown. `{"load": true}` returns null for such a joint.
 
 Gripper:
 
@@ -159,9 +205,14 @@ Manual mode switches the joints to MIT mode with `manual_mode_kp` (default 0) an
 damping, and streams a gravity-compensation torque computed from the vendor URDF's link masses and
 centres of mass at 50 Hz. It has **not been validated on hardware yet**: start with
 `gravity_scale: 0.3`, keep a hand on the arm, and raise the scale until the arm floats. Set
-`gravity_scale: 0` for damping only. `{"torque": "disable"}` remains the fallback.
+`gravity_scale: 0` for damping only, which is all an RS arm does (see B601-RS).
+`{"torque": "disable"}` remains the fallback.
 
 ## Kinematics, geometry, and 3D models
+
+DM only; see B601-RS. The one RS adjustment: the served URDF carries the arm's soft `joint_limits_deg`
+instead of the DM ranges, because viam-server checks joint targets against them and the DM ranges would
+reject every position the RS motors can reach on joints 2 and 3.
 
 - `get_kinematics` serves the bundled URDF with `<collision>` bodies added per `collision_geometry`.
   In `meshes` mode the decimated STLs are shipped in the same response, so viam-server needs no files.
@@ -185,7 +236,7 @@ If you already calibrated via Seeed's LeRobot flow, the zeros are stored in the 
 ## Discovery
 
 Add the `devrel:rebot-b601:discovery` service (no attributes) and open its **Test** panel: it lists a
-ready-to-paste arm and gripper config for every attached B601, with `port` set to the board's stable
+ready-to-paste arm and gripper config for every attached B601-DM board, with `port` set to its stable
 `/dev/serial/by-id/...` path. Discovery identifies boards by USB vendor/product id from sysfs and never
 opens a serial port, so it is safe to run next to other serial devices.
 
@@ -196,7 +247,8 @@ opens a serial port, so it is safe to run next to other serial devices.
 `{"serial_ports": true}` via DoCommand lists every USB serial device on the machine with its USB id,
 which is the quickest way to see who owns which `/dev/ttyACM*`.
 
-Leaving `port` unset on the arm is fine: it resolves to the B601 the same way. If no board is
+Leaving `port` unset is fine on the DM arm: it resolves to the B601 the same way (`variant: "rs"`
+requires it). If no board is
 attached the component fails with `no B601 USB-CAN board found` and the list of serial devices that
 are present, rather than opening something else.
 
@@ -218,6 +270,17 @@ Both the arm and the gripper resolve `port` to the real device before opening it
 stayed silent: check arm power and the CAN daisy chain. The module no longer reopens the port for this,
 since another driver probing the same tty can produce exactly this symptom.
 
+- **RS: `joint2 target -1.5 deg is outside the limits` at or near the rest pose** — the arm rests a little
+  below 0° when its zero is not exact. Re-zero it at rest (Calibration), or widen `joint_limits_deg`. The
+  default lower edge on joints 2 and 3 is -5°.
+- **RS: `move timed out after 2.0s; position error [..., 2.9]`** in `pos_vel` — the motors' stored
+  position-loop gains are soft. Use `control_mode: "mit"`.
+- **RS: `joint1 (0x01) reports undervoltage`** — the rs-06 motors flag a low supply in their status frame and the
+  module refuses to move until it clears. Check the supply voltage, then `{"clear_errors": true}`.
+- **RS: log says `no status frames from motor(s) ...; positions read from mechPos`** — the motors are not
+  streaming status; positions still work through parameter reads but velocity, torque, temperature and faults
+  are unknown, and the arm moves without those checks. Power-cycle the motors if it persists after a restart.
+
 ## Development
 
 ```sh
@@ -226,10 +289,17 @@ make test            # pytest against an in-memory motorbridge fake (no hardware
 make lint            # ruff
 make module          # module.tar.gz for the registry (no bytecode)
 make check-bootstrap # run.sh on a clean copy, as viam-server would
-.venv/bin/python tests/smoke_hardware.py   # read-only hardware check
+.venv/bin/python tests/smoke_hardware.py                                  # DM, read-only
+DYLD_LIBRARY_PATH=/usr/local/lib .venv/bin/python tests/smoke_hardware.py --variant rs --port can0          # RS, read-only (macOS prefix)
+DYLD_LIBRARY_PATH=/usr/local/lib .venv/bin/python tests/smoke_hardware.py --variant rs --port can0 --move   # MOVES joint 6 after an explicit Enter
 ```
 
-Creating a GitHub release (tag `0.3.0` or `v0.3.0`) publishes to the registry through
+The RS read-only run is interactive: it pauses once for a staleness check (move a joint by hand, then press
+Enter) before reading the joints again. `--move` enables torque and moves the arm; the arm refuses with its
+own fault message (undervoltage, for example) if any motor reports a fault. Flag abbreviations are disabled,
+so `--m` is an error, not a move.
+
+Creating a GitHub release (tag `0.4.0` or `v0.4.0`) publishes to the registry through
 `.github/workflows/deploy.yml`; the workflow can also be run by hand with a version input.
 
 ## Comparison with the uFactory xArm module
@@ -256,7 +326,7 @@ when the motion service runs a plan. This module now swaps in its own servicer
 | Trajectory generator hookup | Optional external ML model service | No | No (not planned) |
 | Per-call speed/accel overrides | MoveOptions and `extra` keys | No | Yes, same keys |
 | MoveToPosition | Delegates to a motion service | Raises NotImplemented | Delegates to `motion` |
-| Kinematics | URDF, variant auto-detected | Bundled URDF | Bundled URDF, one variant exists |
+| Kinematics | URDF, variant auto-detected | Bundled URDF | Bundled URDF (DM only) |
 | Collision geometry | Boxes, URDF meshes opt-in | None | Boxes, meshes opt-in |
 | Get3DModels (GLB meshes) | Yes | No | Yes |
 | Joint-limit enforcement | Rejects with an error | Clips silently | Rejects (clip opt-in) |
@@ -276,7 +346,7 @@ when the motion service runs a plan. This module now swaps in its own servicer
 ### Not applicable to this hardware
 
 UFactory Studio proxy, force/torque sensor, vacuum grippers, G2 object-detected register,
-firmware collision sensitivity, hardware variant detection, dedicated gripper bus.
+firmware collision sensitivity, dedicated gripper bus.
 
 ### Still open after 0.2.0
 
@@ -284,3 +354,4 @@ firmware collision sensitivity, hardware variant detection, dedicated gripper bu
   manual mode. Everything in 0.2.0 was tested against the in-memory fake only.
 - Measuring the setpoint rate the 921600-baud bridge sustains and adjusting the `move_hz` default.
 - An upstream Python SDK change so the servicer swap can be removed.
+- Hardware variant detection: `variant` is set by hand today, and discovery finds DM boards only.

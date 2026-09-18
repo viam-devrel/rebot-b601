@@ -1,7 +1,7 @@
 [project]
 name = "viam-rebot-b601"
-version = "0.3.2"
-description = "Viam module for the Seeed Studio reBot Arm B601-DM"
+version = "0.4.0"
+description = "Viam module for the Seeed Studio reBot Arm B601 (DM and RS)"
 requires-python = ">=3.10"
 
 [tool.pytest.ini_options]

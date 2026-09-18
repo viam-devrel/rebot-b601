@@ -1,4 +1,4 @@
-"""Shared access to the B601's USB-CAN serial bridge.
+"""Shared access to the B601's CAN bus (a USB serial bridge, or a CAN channel).
 
 The arm (motors 0x01-0x06) and the gripper (motor 0x07) live on the same CAN
 bus behind one serial device, but are separate Viam components. This module
@@ -13,7 +13,9 @@ Serial-lock hygiene (a field incident: a module process refused its own port
 for days):
 
 * buses are cached by the *resolved* device path, so ``/dev/ttyACM0`` and its
-  ``/dev/serial/by-id/...`` symlink never open the same device twice;
+  ``/dev/serial/by-id/...`` symlink never open the same device twice (a CAN
+  channel name such as ``can0`` or ``PCAN_USBBUS1`` is not a path, so it is
+  cached verbatim);
 * every controller has a finalizer, so a bus that is dropped without
   ``release()`` still closes its descriptor (motorbridge itself has none);
 * when the OS refuses the exclusive lock, the error names the holder. If the
@@ -27,24 +29,33 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from motorbridge import Controller
+from motorbridge.models import MotorState
 from viam.logging import getLogger
 
 LOGGER = getLogger(__name__)
 
-# Damiao motor model per CAN id, from Seeed's B601-DM reference implementation.
+# Motor model per CAN id and vendor, from Seeed's B601-DM and B601-RS reference configs.
 MOTOR_MODELS = {
-    0x01: "4340P",
-    0x02: "4340P",
-    0x03: "4340P",
-    0x04: "4310",
-    0x05: "4310",
-    0x06: "4310",
-    0x07: "4310",
+    "damiao": {0x01: "4340P", 0x02: "4340P", 0x03: "4340P", 0x04: "4310", 0x05: "4310", 0x06: "4310", 0x07: "4310"},
+    "robstride": {
+        0x01: "rs-06",
+        0x02: "rs-06",
+        0x03: "rs-06",
+        0x04: "rs-00",
+        0x05: "rs-00",
+        0x06: "rs-00",
+        0x07: "rs-00",
+    },
 }
-FEEDBACK_ID_OFFSET = 0x10  # motor 0x01 replies on 0x11, etc.
+VENDORS = tuple(MOTOR_MODELS)
+FEEDBACK_ID_OFFSET = 0x10  # Damiao: motor 0x01 replies on 0x11, etc.
+ROBSTRIDE_HOST_ID = 0xFD  # RobStride: every motor addresses the host as 0xFD
+RID_ROBSTRIDE_MECH_POS = 0x7019  # RobStride mechPos parameter, rad
+_FALLBACK_WARN_INTERVAL_S = 30.0
+_MECHPOS_TIMEOUT_MS = 200  # a healthy motor answers in a few ms; a silent one must not stall a poll for 1 s
 
 DEFAULT_BAUD = 921600
 
@@ -58,6 +69,16 @@ except Exception:  # pragma: no cover - very old motorbridge
     _CallError = _MBError = RuntimeError
 
 LINK_ERRORS = (_CallError, _MBError, OSError)
+
+
+class PositionOnlyState(MotorState):
+    """A RobStride state rebuilt from a mechPos parameter read.
+
+    Only ``pos`` is measured. Velocity, torque, temperatures and the fault field are
+    unknown and read as zero; consumers must not treat them as measurements.
+    """
+
+    position_only = True
 
 
 class BusError(RuntimeError):
@@ -157,13 +178,31 @@ def detect_port() -> str:
     )
 
 
+def is_serial_port(port: str) -> bool:
+    """True for a serial device (the Damiao USB bridge): any absolute path.
+
+    CAN channel names (``can0``, ``PCAN_USBBUS1``) are not paths, so anything
+    that does not start with "/" is a CAN channel.
+    """
+    return port.startswith("/")
+
+
 def canonical_device(port: str) -> str:
-    """Resolve symlinks so every alias of a serial device maps to one bus."""
+    """Resolve symlinks so every alias of a serial device maps to one bus.
+
+    CAN channel names are not paths and are used as-is.
+    """
+    if not is_serial_port(port):
+        return port
     return os.path.realpath(port)
 
 
 def _open_controller(port: str, baud: int):
-    return Controller.from_dm_serial(serial_port=port, baud=baud)
+    if is_serial_port(port):
+        return Controller.from_dm_serial(serial_port=port, baud=baud)
+    # A CAN channel: SocketCAN on Linux (can0), PCAN via libPCBUSB on macOS (can0 or
+    # PCAN_USBBUS1). The vendor never decides the transport; the port string does.
+    return Controller(port)
 
 
 def _quiet_close(controller, motors: Optional[dict] = None) -> None:
@@ -285,17 +324,24 @@ def describe_holders(device: str) -> str:
 
 
 class SharedBus:
-    """One motorbridge Controller per serial port, shared across components."""
+    """One motorbridge Controller per port, shared across components.
+
+    A port is either a serial device (cached by its resolved path) or a CAN
+    channel name such as ``can0``/``PCAN_USBBUS1`` (cached verbatim).
+    """
 
     _instances: Dict[str, "SharedBus"] = {}
     _instances_lock = threading.Lock()
     # Test hook: replace to construct a fake controller instead of opening serial.
     controller_factory: Callable[[str, int], object] = staticmethod(_open_controller)
 
-    def __init__(self, port: str, baud: int):
+    def __init__(self, port: str, baud: int, vendor: str = "damiao"):
+        if vendor not in VENDORS:
+            raise BusError(f"unknown motor vendor '{vendor}'; expected one of {VENDORS}")
         self.port = port  # as configured, for logs
         self.device = canonical_device(port)  # cache key
         self.baud = baud
+        self.vendor = vendor
         self.lock = threading.RLock()
         self.controller = None
         self._finalizer: Optional[weakref.finalize] = None
@@ -303,6 +349,7 @@ class SharedBus:
         self._refcount = 0
         self._reconnect_callbacks: List[Callable[[], None]] = []
         self.reconnects = 0
+        self._last_fallback_warn = 0.0
         self._open()
 
     # ----------------------------------------------------------- open/close
@@ -364,15 +411,17 @@ class SharedBus:
     # --------------------------------------------------------------- cache
 
     @classmethod
-    def acquire(cls, port: str, baud: int = DEFAULT_BAUD) -> "SharedBus":
+    def acquire(cls, port: str, baud: int = DEFAULT_BAUD, vendor: str = "damiao") -> "SharedBus":
         device = canonical_device(port)
         with cls._instances_lock:
             bus = cls._instances.get(device)
             if bus is None:
-                bus = cls(port, baud)
+                bus = cls(port, baud, vendor)
                 cls._instances[device] = bus
             elif bus.baud != baud:
                 raise BusError(f"{port} is already open at {bus.baud} baud; cannot reopen it at {baud}")
+            elif bus.vendor != vendor:
+                raise BusError(f"{port} is already open for {bus.vendor} motors; cannot reopen it for {vendor}")
             elif bus.controller is None:
                 # A previous reconnect gave up and left the bus closed while
                 # someone still held a reference. Reopen rather than hand back
@@ -382,9 +431,16 @@ class SharedBus:
             bus._refcount += 1
             return bus
 
-    def matches(self, port: str, baud: int) -> bool:
-        """True when ``port``/``baud`` name this same bus (aliases resolved)."""
-        return canonical_device(port) == self.device and int(baud) == self.baud
+    @classmethod
+    def vendor_of(cls, port: str) -> Optional[str]:
+        """Vendor of the bus already open on ``port``, or None when nothing holds it."""
+        with cls._instances_lock:
+            bus = cls._instances.get(canonical_device(port))
+            return bus.vendor if bus is not None else None
+
+    def matches(self, port: str, baud: int, vendor: str = "damiao") -> bool:
+        """True when ``port``/``baud``/``vendor`` name this same bus (aliases resolved)."""
+        return canonical_device(port) == self.device and int(baud) == self.baud and vendor == self.vendor
 
     @classmethod
     def reset_instances(cls):
@@ -439,22 +495,35 @@ class SharedBus:
                 raise BusError(f"{self.port} is not open")
             m = self._motors.get(can_id)
             if m is None:
-                m = self.controller.add_damiao_motor(can_id, can_id + FEEDBACK_ID_OFFSET, MOTOR_MODELS[can_id])
+                model = MOTOR_MODELS[self.vendor][can_id]
+                if self.vendor == "robstride":
+                    m = self.controller.add_robstride_motor(can_id, ROBSTRIDE_HOST_ID, model)
+                else:
+                    m = self.controller.add_damiao_motor(can_id, can_id + FEEDBACK_ID_OFFSET, model)
                 self._motors[can_id] = m
             return m
 
-    def poll_feedback(self, can_ids: Iterable[int], retries: int = 5, settle_s: float = 0.02):
+    def poll_feedback(
+        self, can_ids: Iterable[int], retries: int = 5, settle_s: float = 0.02, positions_only: bool = False
+    ):
         """Request and collect fresh feedback for the given motors.
 
         A single poll does not always drain every motor's reply off the bus, so
         request/poll is retried until every motor has reported (or retries run
         out). Returns {can_id: MotorState | None}. ``retries=1`` gives a cheap
         best-effort sample for in-loop monitoring.
+
+        ``positions_only`` (RobStride): the caller knows the motors are stopped, so
+        their status stream is off and motorbridge would keep serving the frame it
+        cached at the stop; read positions by parameter instead of trusting it.
         """
         can_ids = list(can_ids)
         with self.lock:
             motors = {cid: self.motor(cid) for cid in can_ids}
             states = {cid: None for cid in can_ids}
+            if positions_only and self.vendor == "robstride":
+                self._fill_from_mechpos(motors, states, expected=True)
+                return states
             for attempt in range(max(1, retries)):
                 for cid, m in motors.items():
                     if states[cid] is None:
@@ -472,4 +541,47 @@ class SharedBus:
                     break
                 if attempt + 1 < retries:
                     time.sleep(settle_s)
+            if self.vendor == "robstride" and retries > 1:
+                # retries=1 is the cheap in-loop sample (monitor tick, is_moving, manual
+                # loop); six blocking parameter reads do not belong there. Callers already
+                # treat None as "skip this joint this tick".
+                self._fill_from_mechpos(motors, states)
             return states
+
+    def _fill_from_mechpos(self, motors: Dict[int, Any], states: Dict[int, Any], expected: bool = False) -> None:
+        """RobStride motors stream status frames only with active report on. When a
+        motor has not filled get_state(), read its mechPos parameter directly, as
+        Seeed's reference stack does. Velocity, torque and temperature are unknown
+        on this path and read as zero."""
+        missing = [cid for cid, s in states.items() if s is None]
+        recovered: List[int] = []
+        for cid in missing:
+            try:
+                pos = motors[cid].robstride_get_param_f32(RID_ROBSTRIDE_MECH_POS, _MECHPOS_TIMEOUT_MS)
+            except Exception:
+                # Deliberately not re-raised as a link error. A genuinely dead link has
+                # already been raised by poll_feedback_once() in the retry loop above, and
+                # a RobStride parameter timeout's wording is not known to match
+                # is_motor_timeout(), so re-raising here could reconnect the port for a
+                # merely silent motor - the field failure this module already fixed once.
+                continue  # left None; callers already handle gaps
+            states[cid] = PositionOnlyState(
+                can_id=cid,
+                arbitration_id=ROBSTRIDE_HOST_ID,
+                status_code=0,
+                pos=float(pos),
+                vel=0.0,
+                torq=0.0,
+                t_mos=0.0,
+                t_rotor=0.0,
+            )
+            recovered.append(cid)
+        if missing and not expected:
+            now = time.monotonic()
+            if now - self._last_fallback_warn >= _FALLBACK_WARN_INTERVAL_S:
+                self._last_fallback_warn = now
+                LOGGER.warning(
+                    "no status frames from motor(s) %s; positions read from mechPos for %s (is active report on?)",
+                    ", ".join(f"0x{c:02x}" for c in missing),
+                    ", ".join(f"0x{c:02x}" for c in recovered) or "none",
+                )

@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.4.0 (2026-09-18)
+
+### Added
+- `variant: "rs"` on the arm drives the reBot Arm **B601-RS** (RobStride rs-06/rs-00 motors over CAN):
+  joint reading, joint moves, streamed trajectories, stop, torque enable/disable, damping-only manual mode,
+  health with RobStride fault names. `port` is the CAN channel (`can0` on Linux SocketCAN, `can0` or
+  `PCAN_USBBUS1` on macOS PCAN). RS defaults: Seeed's MIT gains, RS soft joint limits, and active status
+  reporting; when no status frame arrives, positions come from `mechPos` and the joint reports
+  `position_only`. With torque off, stopped RobStride motors stop streaming and would report a frozen
+  frame, so positions are read by parameter until torque is enabled again.
+- On RS the served kinematics file carries the arm's soft `joint_limits_deg` instead of the DM URDF's
+  ranges; viam-server checks joint targets against them, and the DM ranges rejected every RS target on
+  joints 2 and 3.
+- `run.sh` exports `DYLD_LIBRARY_PATH=/usr/local/lib` on macOS when the MacCAN runtime is installed.
+- `tests/smoke_hardware.py --variant rs --port can0 [--move]`; the move step is gated behind an explicit
+  Enter, refuses on any motor fault, and flag abbreviations are disabled so `--m` cannot move the arm.
+
+### Changed
+- `raw_state` returns the same per-joint dict as the health report (superset of the old keys: adds
+  `can_id`, `status_code`, `fault`, `position_only`). `load` returns null for a joint known only by position.
+- A move whose monitor gets no feedback from any joint now logs a warning instead of staying silent (DM too).
+
+### Not yet on RS
+- Kinematics, `get_end_position`, motion-service moves, gravity compensation, the gripper, and discovery
+  remain DM-only. The gripper refuses to attach to an RS arm.
+- `pos_vel` with the motors' stored gains stops a few degrees short of its target; use `control_mode: "mit"`
+  on RS. Writing Seeed's position-loop gains at configure time is the follow-up if `pos_vel` is needed.
+- `is_moving` on RS reflects only this module's own moves: the status-frame velocity is not a measurement
+  (a resting motor reported -0.15 rad/s on the bench), so the velocity check is disabled.
+
 ## 0.3.2 (2026-09-09)
 
 ### Fixed
