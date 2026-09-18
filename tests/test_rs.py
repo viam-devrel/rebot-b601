@@ -6,6 +6,7 @@ import pytest
 
 from src.rebot_b601 import bus as bus_mod
 from src.rebot_b601.bus import BusError, SharedBus, canonical_device
+from src.rebot_b601.damiao import JointHealth
 
 
 def test_robstride_bus_registers_rs_models_on_host_id_fd(factory):
@@ -83,6 +84,7 @@ def test_poll_feedback_falls_back_to_mechpos_when_nothing_streams(factory):
     assert [round(math.degrees(states[c].pos), 3) for c in (1, 2, 3)] == [10.0, 20.0, 30.0]
     assert states[1].status_code == 0 and states[1].vel == 0.0 and states[1].torq == 0.0
     assert isinstance(states[1], bus_mod.PositionOnlyState) and states[1].position_only
+    assert JointHealth.from_state(1, states[1], "robstride").position_only
     bus.release()
 
 

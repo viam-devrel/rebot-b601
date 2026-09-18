@@ -43,8 +43,10 @@ def test_robstride_status_is_a_fault_bitfield():
     assert damiao.status_text(0x1, "robstride") == "undervoltage"
     assert damiao.status_text(0x21, "robstride") == "undervoltage, not calibrated"
     assert "0x40" in damiao.status_text(0x40, "robstride")
+    assert damiao.status_text(0x41, "robstride") == "undervoltage, unknown bits 0x40"
     assert not damiao.is_fault(0x0, "robstride")
     assert damiao.is_fault(0x1, "robstride") and not damiao.is_transient(0x1, "robstride")
+    assert not damiao.is_transient(0xD, "robstride")  # 0xD is a Damiao transient code, never a RobStride one
     # Damiao decode is untouched
     assert damiao.status_text(0x1) == "enabled" and not damiao.is_fault(0x1)
 

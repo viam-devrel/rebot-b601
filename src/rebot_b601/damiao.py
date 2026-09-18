@@ -60,7 +60,10 @@ def status_text(code: int, vendor: str = "damiao") -> str:
         if code == 0:
             return "ok"
         names = [name for bit, name in ROBSTRIDE_FAULT_BITS.items() if code & bit]
-        return ", ".join(names) if names else f"robstride fault bits 0x{code:x}"
+        rest = code & ~0x3F
+        if rest:
+            names.append(f"unknown bits 0x{rest:x}")
+        return ", ".join(names)
     return STATUS_TEXT.get(code, f"unknown status 0x{code:x}")
 
 
