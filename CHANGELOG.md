@@ -6,9 +6,9 @@
 - `variant: "rs"` on the arm drives the reBot Arm **B601-RS** (RobStride rs-06/rs-00 motors over CAN):
   joint reading, joint moves, streamed trajectories, stop, torque enable/disable, damping-only manual mode,
   health with RobStride fault names. `port` is the CAN channel (`can0` on Linux SocketCAN, `can0` or
-  `PCAN_USBBUS1` on macOS PCAN). RS defaults: Seeed's MIT gains, RS soft joint limits, RobStride active status
-  reporting, mechPos parameter reads when no status frame arrives (joints then report `position_only`),
-  a 0.15 rad/s `is_moving` threshold.
+  `PCAN_USBBUS1` on macOS PCAN). RS defaults: Seeed's MIT gains, RS soft joint limits, and active status
+  reporting; when no status frame arrives, positions come from `mechPos` and the joint reports
+  `position_only`.
 - `run.sh` exports `DYLD_LIBRARY_PATH=/usr/local/lib` on macOS when the MacCAN runtime is installed.
 - `tests/smoke_hardware.py --variant rs --port can0 [--move]`; the move step is gated behind an explicit
   Enter, refuses on any motor fault, and flag abbreviations are disabled so `--m` cannot move the arm.

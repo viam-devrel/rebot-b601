@@ -19,31 +19,8 @@ On the DM arm both components share one serial connection; the module multiplexe
   or a udev rule.
 - The arm **zeroed** (see Calibration below). Joint angles are relative to the motors' stored zero position.
 - `uv` or `python3 -m venv` on the machine; `run.sh` bootstraps a virtualenv on first start.
-- **B601-RS only:** the RS arm (RobStride rs-06 motors for joints 1–3, rs-00 for joints 4–6)
-  speaks plain CAN at 1 Mbps instead of serial, with the module as host id `0xFD`. `port` is the CAN channel
-  and is **required**; `baud` is ignored and `can_timeout_ms` is rejected.
-  - Linux: a CANable/candleLight adapter shows up as SocketCAN. Bring it up with
-    `sudo ip link set can0 type can bitrate 1000000 && sudo ip link set can0 up`, then set `"port": "can0"`.
-  - macOS: a PEAK PCAN-USB goes through motorbridge's PCAN backend, which dlopens the MacCAN PCBUSB runtime by
-    bare name. Install it so `libPCBUSB.dylib` sits in `/usr/local/lib` (`run.sh` exports `DYLD_LIBRARY_PATH`
-    pointing there), and set `"port": "can0"` or `"PCAN_USBBUS1"`. macOS strips `DYLD_LIBRARY_PATH` when it
-    execs a SIP-protected binary, so the venv must come from `uv` (which `run.sh` prefers) or another
-    non-system Python; one built from `/usr/bin/python3` drops the export and motorbridge reports
-    `load PCBUSB failed`.
-  - `control_mode` still defaults to `"pos_vel"`, but Seeed run the RS arm in MIT mode and you may want to as
-    well: on RS every `pos_vel` setpoint costs two parameter writes per joint.
-  - Scope: joint reading and control only. `get_kinematics`, `get_geometries`, `get_3d_models`,
-    `get_end_position`, and motion-service moves still describe the **DM** arm; the gripper component refuses
-    to attach to an RS arm; discovery finds DM boards only.
-  - Manual mode is damping only. Gravity compensation uses the DM arm's mass model, so `gravity_scale` is
-    forced to 0 and the `gravity_torques` command refuses.
-  - The module turns on RobStride active status reporting whenever it configures the motors: at startup with
-    the default `enable_on_start`, on `{"torque": "enable"}`, and after a bus reconnect. Without those status
-    frames joint positions are still read (through the `mechPos` parameter) and the arm moves on position
-    alone with a warning, unlike the DM arm, which refuses to move without feedback. In that state velocity,
-    torque, temperature and faults are unknown, `is_moving` only reflects moves this module is running (the
-    velocity check never fires), manual mode commands nothing, and the affected joints report `position_only`
-    in the health report.
+- **B601-RS:** plain CAN at 1 Mbps instead of serial. `port` is the CAN channel and is required; `baud` is
+  ignored and `can_timeout_ms` is rejected. Bringing the interface up: see B601-RS below.
 
 ## Example configuration
 
@@ -81,13 +58,36 @@ B601-RS arm on a CAN interface:
   "attributes": { "variant": "rs", "port": "can0", "control_mode": "mit" } }
 ```
 
+### B601-RS
+
+The RS arm is six RobStride motors on plain CAN at 1 Mbps (rs-06 for joints 1–3, rs-00 for joints 4–6),
+addressed by the module as host id `0xFD`. Seeed run the RS arm in MIT mode. On RS each `pos_vel` setpoint
+costs two parameter writes per joint, so `control_mode: "mit"` is usually the better default although
+`pos_vel` remains the module's.
+
+On Linux a CANable/candleLight adapter shows up as SocketCAN: bring it up with
+`sudo ip link set can0 type can bitrate 1000000 && sudo ip link set can0 up`, then set `"port": "can0"`.
+On macOS a PEAK PCAN-USB goes through motorbridge's PCAN backend, which dlopens the MacCAN PCBUSB runtime by
+bare name; install it so `libPCBUSB.dylib` sits in `/usr/local/lib` (`run.sh` exports `DYLD_LIBRARY_PATH`
+pointing there) and set `"port": "can0"` or `"PCAN_USBBUS1"`. macOS strips `DYLD_LIBRARY_PATH` when it execs
+a SIP-protected binary, so the venv must come from `uv` (which `run.sh` prefers) or another non-system
+Python; one built from `/usr/bin/python3` drops the export and motorbridge reports `load PCBUSB failed`.
+
+Not on RS yet: support covers joint reading and control only. `get_end_position`, `get_kinematics`,
+`get_geometries`, `get_3d_models`, and `move_to_position` describe the DM arm, the gripper component refuses
+to attach to an RS arm, and discovery finds DM boards only. Manual mode is damping only, since gravity
+compensation uses the DM arm's mass model: `gravity_scale` is forced to 0 and `gravity_torques` refuses.
+Joint positions still work when the motors send no status frames (they are read as parameters); the health
+report then shows `position_only: true` and the arm moves without fault, temperature or torque checks (see
+Safety and Troubleshooting).
+
 ### Arm attributes
 
 | Attribute | Type | Default | Description |
 |---|---|---|---|
 | `variant` | string | `"dm"` | `"dm"` for the B601-DM (Damiao motors, USB serial bridge) or `"rs"` for the B601-RS (RobStride motors, CAN). `"rs"` requires `port` |
 | `port` | string | auto-detected | Serial device of the USB-CAN bridge (dm), or the CAN channel such as `can0` or `PCAN_USBBUS1` (rs) |
-| `baud` | int | `921600` | Serial baud rate (dm only) |
+| `baud` | int | `921600` | Serial baud rate (dm; ignored on rs) |
 | `control_mode` | string | `"pos_vel"` | `"pos_vel"` (velocity-capped position) or `"mit"` (impedance) |
 | `speed_deg_s` | number or [6] | `60` | Max joint speed, deg/s (clamped to 1–180) |
 | `acceleration_deg_s2` | number or [6] | `200` | Max joint acceleration, deg/s² (clamped to 1–1000) |
@@ -104,7 +104,7 @@ B601-RS arm on a CAN interface:
 | `torque_trip_polls` | int | `3` | Consecutive over-limit polls (at 10 Hz) that count as a collision |
 | `temperature_warn_c` | number | `60` | Log a warning when a motor is at or above this temperature |
 | `temperature_limit_c` | number | `80` | Refuse and abort moves when a motor is at or above this temperature |
-| `can_timeout_ms` | int | unset | Program the Damiao CAN watchdog so a motor disables itself if commands stop arriving (dm only) |
+| `can_timeout_ms` | int | unset | Program the Damiao CAN watchdog so a motor disables itself if commands stop arriving (dm; rejected on rs) |
 | `reconnect` | bool | `true` | Reopen the bus (serial bridge or CAN channel) and restore motor state after a link failure |
 | `enable_on_start` | bool | `true` | Enable torque when the component starts |
 | `disable_torque_on_close` | bool | `false` | Let the arm go limp when the component closes (it will slump under gravity!) |
@@ -138,7 +138,7 @@ B601-RS arm on a CAN interface:
   or the per-joint lists), or `extra` keys `speed_d`/`speed_r`, `acceleration_d`/`acceleration_r`,
   `move_hz`, `direct` (send the final target only), `interpolate: false`, `waitAtEnd: false`.
 - `move_to_position` is delegated to the motion service named by `motion`; without it the call
-  fails with an explanation. The motion service plans against the URDF and collision geometry
+  fails with an explanation (DM only; the RS arm serves no kinematics). The motion service plans against the URDF and collision geometry
   from `get_kinematics` and executes through `MoveThroughJointPositions`, which this module serves
   even though the Python SDK's stock arm servicer does not.
 - Streamed trajectories (`MoveThroughJointPositionsStreamed`) are paced by each point's timestamp.
@@ -152,7 +152,7 @@ B601-RS arm on a CAN interface:
   overload on DM; undervoltage, over-current, over-temperature, magnetic or HALL encoder fault,
   not calibrated on RS) rejects the move with the decoded reason. Fix the cause, then send
   `{"clear_errors": true}`. An RS arm that sends no status frames has nothing to check and moves
-  anyway (see Prerequisites).
+  anyway (see B601-RS).
 - During a move it samples torque, status, and temperature at 10 Hz. A `torque_limit_nm` trip, a
   fault, or an over-temperature reading aborts the move and holds position.
 - If the bus (serial bridge or CAN channel) disappears mid-session, the module reopens it (with
@@ -200,10 +200,12 @@ Manual mode switches the joints to MIT mode with `manual_mode_kp` (default 0) an
 damping, and streams a gravity-compensation torque computed from the vendor URDF's link masses and
 centres of mass at 50 Hz. It has **not been validated on hardware yet**: start with
 `gravity_scale: 0.3`, keep a hand on the arm, and raise the scale until the arm floats. Set
-`gravity_scale: 0` for damping only, which is all an RS arm does (see Prerequisites).
+`gravity_scale: 0` for damping only, which is all an RS arm does (see B601-RS).
 `{"torque": "disable"}` remains the fallback.
 
 ## Kinematics, geometry, and 3D models
+
+DM only; see B601-RS.
 
 - `get_kinematics` serves the bundled URDF with `<collision>` bodies added per `collision_geometry`.
   In `meshes` mode the decimated STLs are shipped in the same response, so viam-server needs no files.
@@ -244,8 +246,6 @@ attached the component fails with `no B601 USB-CAN board found` and the list of 
 are present, rather than opening something else.
 
 ## Troubleshooting
-
-The first two entries are about the DM arm's USB-CAN serial bridge; the RS entries follow.
 
 **`Unable to acquire exclusive lock on serial port`** means the USB-CAN board is present but another
 open file descriptor holds it. The error names the holder when it can be seen from `/proc`:
@@ -314,7 +314,7 @@ when the motion service runs a plan. This module now swaps in its own servicer
 | Trajectory generator hookup | Optional external ML model service | No | No (not planned) |
 | Per-call speed/accel overrides | MoveOptions and `extra` keys | No | Yes, same keys |
 | MoveToPosition | Delegates to a motion service | Raises NotImplemented | Delegates to `motion` |
-| Kinematics | URDF, variant auto-detected | Bundled URDF | Bundled URDF (DM; RS added in 0.4.0, joints only) |
+| Kinematics | URDF, variant auto-detected | Bundled URDF | Bundled URDF (DM only) |
 | Collision geometry | Boxes, URDF meshes opt-in | None | Boxes, meshes opt-in |
 | Get3DModels (GLB meshes) | Yes | No | Yes |
 | Joint-limit enforcement | Rejects with an error | Clips silently | Rejects (clip opt-in) |
