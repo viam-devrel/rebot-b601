@@ -108,6 +108,13 @@ class B601Gripper(Gripper, EasyResource):
             # Inherit the bus settings from the arm when it is a local B601Arm.
             for rn, dep in dependencies.items():
                 if rn.name == arm_name and hasattr(dep, "bus") and dep.bus is not None:
+                    if dep.bus.vendor != "damiao":
+                        # The gripper drives its motor in Damiao FORCE_POS mode and would
+                        # otherwise fight the arm for the CAN channel with a vendor mismatch.
+                        raise ValueError(
+                            f"the gripper is not supported on the B601-RS yet (arm '{arm_name}' has "
+                            "variant 'rs'); remove the gripper component for now"
+                        )
                     port = port or dep.bus.port
                     baud = baud or dep.bus.baud
         port = port or detect_port()
