@@ -60,7 +60,7 @@ def status_text(code: int, vendor: str = "damiao") -> str:
         if code == 0:
             return "ok"
         names = [name for bit, name in ROBSTRIDE_FAULT_BITS.items() if code & bit]
-        rest = code & ~0x3F
+        rest = code & ~sum(ROBSTRIDE_FAULT_BITS)  # the keys are disjoint bits, so their sum is the mask
         if rest:
             names.append(f"unknown bits 0x{rest:x}")
         return ", ".join(names)

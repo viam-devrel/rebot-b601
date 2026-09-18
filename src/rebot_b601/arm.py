@@ -367,7 +367,7 @@ class B601Arm(Arm, EasyResource):
         """Decode motor faults before a move. Transient faults are cleared once;
         hard faults raise MotorFault; hot motors raise OverTemperatureError."""
         cleared = False
-        position_only: List[str] = []
+        unchecked: List[str] = []  # joints known only by position this poll
         for i, cid in enumerate(ARM_CAN_IDS):
             s = states.get(cid)
             if s is None:
@@ -376,7 +376,7 @@ class B601Arm(Arm, EasyResource):
             if health.position_only:
                 # No status frame: fault and temperature are unknown, not zero. The move
                 # goes ahead on position alone; say so where the decision is made.
-                position_only.append(JOINT_NAMES[i])
+                unchecked.append(JOINT_NAMES[i])
                 continue
             if health.fault:
                 if health.transient and auto_clear:
@@ -392,11 +392,11 @@ class B601Arm(Arm, EasyResource):
                 )
             if max(health.t_mos_c, health.t_rotor_c) >= self.temp_warn_c:
                 self._warn(f"temp{cid}", "%s is warm: %.0f C", JOINT_NAMES[i], max(health.t_mos_c, health.t_rotor_c))
-        if position_only:
+        if unchecked:
             self._warn(
                 "posonly",
                 "moving without fault/temperature/torque checks on %s (no status frames)",
-                ", ".join(position_only),
+                ", ".join(unchecked),
             )
         if cleared:
             time.sleep(_SETTLE_SEC)
@@ -654,7 +654,10 @@ class B601Arm(Arm, EasyResource):
 
                     self._bus_call(_send)
                 else:
-                    self._warn("manual_nostate", "manual mode: no feedback from any joint; nothing is being commanded")
+                    # Partial feedback also lands here: damping only some joints of a 6-DoF
+                    # chain is a coin flip, so the loop commands nothing until all six report.
+                    missing = ", ".join(JOINT_NAMES[i] for i, p in enumerate(pos) if p is None)
+                    self._warn("manual_nostate", "manual mode: %s did not report; commanding nothing", missing)
             except Exception:
                 self._warn(
                     "manual",
