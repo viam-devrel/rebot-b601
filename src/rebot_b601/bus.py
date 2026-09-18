@@ -29,7 +29,7 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from motorbridge import Controller
 from motorbridge.models import MotorState
@@ -56,6 +56,7 @@ FEEDBACK_ID_OFFSET = 0x10  # Damiao: motor 0x01 replies on 0x11, etc.
 ROBSTRIDE_HOST_ID = 0xFD  # RobStride: every motor addresses the host as 0xFD
 RID_ROBSTRIDE_MECH_POS = 0x7019  # RobStride mechPos parameter, rad
 _FALLBACK_WARN_INTERVAL_S = 30.0
+_MECHPOS_TIMEOUT_MS = 200  # a healthy motor answers in a few ms; a silent one must not stall a poll for 1 s
 
 DEFAULT_BAUD = 921600
 
@@ -69,6 +70,16 @@ except Exception:  # pragma: no cover - very old motorbridge
     _CallError = _MBError = RuntimeError
 
 LINK_ERRORS = (_CallError, _MBError, OSError)
+
+
+class PositionOnlyState(MotorState):
+    """A RobStride state rebuilt from a mechPos parameter read.
+
+    Only ``pos`` is measured. Velocity, torque, temperatures and the fault field are
+    unknown and read as zero; consumers must not treat them as measurements.
+    """
+
+    position_only = True
 
 
 class BusError(RuntimeError):
@@ -515,22 +526,31 @@ class SharedBus:
                     break
                 if attempt + 1 < retries:
                     time.sleep(settle_s)
-            if self.vendor == "robstride":
+            if self.vendor == "robstride" and retries > 1:
+                # retries=1 is the cheap in-loop sample (monitor tick, is_moving, manual
+                # loop); six blocking parameter reads do not belong there. Callers already
+                # treat None as "skip this joint this tick".
                 self._fill_from_mechpos(motors, states)
             return states
 
-    def _fill_from_mechpos(self, motors: dict, states: dict) -> None:
+    def _fill_from_mechpos(self, motors: Dict[int, Any], states: Dict[int, Any]) -> None:
         """RobStride motors stream status frames only with active report on. When a
         motor has not filled get_state(), read its mechPos parameter directly, as
         Seeed's reference stack does. Velocity, torque and temperature are unknown
         on this path and read as zero."""
         missing = [cid for cid, s in states.items() if s is None]
+        recovered: List[int] = []
         for cid in missing:
             try:
-                pos = motors[cid].robstride_get_param_f32(RID_ROBSTRIDE_MECH_POS)
+                pos = motors[cid].robstride_get_param_f32(RID_ROBSTRIDE_MECH_POS, _MECHPOS_TIMEOUT_MS)
             except Exception:
+                # Deliberately not re-raised as a link error. A genuinely dead link has
+                # already been raised by poll_feedback_once() in the retry loop above, and
+                # a RobStride parameter timeout's wording is not known to match
+                # is_motor_timeout(), so re-raising here could reconnect the port for a
+                # merely silent motor - the field failure this module already fixed once.
                 continue  # left None; callers already handle gaps
-            states[cid] = MotorState(
+            states[cid] = PositionOnlyState(
                 can_id=cid,
                 arbitration_id=ROBSTRIDE_HOST_ID,
                 status_code=0,
@@ -540,11 +560,13 @@ class SharedBus:
                 t_mos=0.0,
                 t_rotor=0.0,
             )
+            recovered.append(cid)
         if missing:
             now = time.monotonic()
             if now - self._last_fallback_warn >= _FALLBACK_WARN_INTERVAL_S:
                 self._last_fallback_warn = now
                 LOGGER.warning(
-                    "no status frames from motor(s) %s; read mechPos directly (is active report on?)",
+                    "no status frames from motor(s) %s; positions read from mechPos for %s (is active report on?)",
                     ", ".join(f"0x{c:02x}" for c in missing),
+                    ", ".join(f"0x{c:02x}" for c in recovered) or "none",
                 )

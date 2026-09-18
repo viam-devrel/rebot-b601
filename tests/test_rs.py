@@ -82,6 +82,7 @@ def test_poll_feedback_falls_back_to_mechpos_when_nothing_streams(factory):
     states = bus.poll_feedback([1, 2, 3], retries=2, settle_s=0.0)
     assert [round(math.degrees(states[c].pos), 3) for c in (1, 2, 3)] == [10.0, 20.0, 30.0]
     assert states[1].status_code == 0 and states[1].vel == 0.0 and states[1].torq == 0.0
+    assert isinstance(states[1], bus_mod.PositionOnlyState) and states[1].position_only
     bus.release()
 
 
@@ -94,7 +95,7 @@ def test_poll_feedback_leaves_none_when_param_read_fails_too(factory):
         raise bus_mod._CallError("param read timed out")
 
     m.robstride_get_param_f32 = boom
-    assert bus.poll_feedback([1], retries=1, settle_s=0.0)[1] is None
+    assert bus.poll_feedback([1], retries=2, settle_s=0.0)[1] is None
     bus.release()
 
 
@@ -102,5 +103,34 @@ def test_damiao_bus_never_reads_robstride_params(factory):
     bus = SharedBus.acquire("/dev/fake0")
     m = bus.motor(1)
     m.stream_state = False
+    assert bus.poll_feedback([1], retries=2, settle_s=0.0)[1] is None
+    bus.release()
+
+
+def test_in_loop_sample_never_pays_for_param_reads(factory):
+    bus = SharedBus.acquire("can0", vendor="robstride")
+    m = bus.motor(1)
+    m.stream_state = False
     assert bus.poll_feedback([1], retries=1, settle_s=0.0)[1] is None
+    assert m.param_reads == 0
+    bus.release()
+
+
+def test_streaming_robstride_state_is_used_without_param_reads(factory):
+    bus = SharedBus.acquire("can0", vendor="robstride")
+    m = bus.motor(1)
+    m.robstride_set_active_report(True)
+    m.pos = 0.5
+    s = bus.poll_feedback([1], retries=2, settle_s=0.0)[1]
+    assert s is not None and not getattr(s, "position_only", False) and s.pos == 0.5
+    assert m.param_reads == 0
+    bus.release()
+
+
+def test_robstride_state_needs_active_report_in_the_fake(factory):
+    bus = SharedBus.acquire("can0", vendor="robstride")
+    m = bus.motor(1)
+    assert isinstance(bus.poll_feedback([1], retries=2, settle_s=0.0)[1], bus_mod.PositionOnlyState)
+    m.robstride_set_active_report(True)
+    assert not getattr(bus.poll_feedback([1], retries=2, settle_s=0.0)[1], "position_only", False)
     bus.release()

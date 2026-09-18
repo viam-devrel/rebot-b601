@@ -48,6 +48,7 @@ class FakeMotor:
         self.closed = False  # motorbridge.Motor.close() was called (frees the handle's bus reference)
         self.active_report = False  # RobStride: status frames stream only when this is on
         self.stream_state = True  # False: get_state() never fills, only param reads work
+        self.param_reads = 0
 
     # --- motorbridge.Motor API ---
     def close(self):
@@ -96,9 +97,18 @@ class FakeMotor:
         self._requested = True
 
     def get_state(self):
-        if not self.stream_state or not self._requested:
+        if not self.stream_state:
+            return None
+        if self.vendor == "robstride":
+            # Real RobStride motors ignore request_feedback(); state arrives only as
+            # streamed status frames, which need active report on.
+            return self._state() if self.active_report else None
+        if not self._requested:
             return None
         self._requested = False
+        return self._state()
+
+    def _state(self):
         return MotorState(
             can_id=self.can_id,
             arbitration_id=self.feedback_id,
@@ -133,6 +143,7 @@ class FakeMotor:
 
     def robstride_get_param_f32(self, param_id: int, timeout_ms: int = 1000) -> float:
         self.controller._check_link()
+        self.param_reads += 1
         if param_id == 0x7019:  # mechPos, rad
             self.step()
             return self.pos
