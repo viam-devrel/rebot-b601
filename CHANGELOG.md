@@ -13,7 +13,7 @@
   per joint, the bench check that gates RS gravity compensation.
 
 ### Changed
-- `spatial` exposes `MODELS["dm"|"rs"]`; the old module-level names alias the DM model. DM's served kinematics
+- `spatial` exposes `MODELS["dm"|"rs"]` and the FK, gravity and asset helpers live on the model; the DM-only module-level names are gone. DM's served kinematics
   payload is byte-identical to 0.4.0 (pinned by `tests/test_dm_baseline.py`).
 - A model with no collision primitives logs a warning at configure.
 

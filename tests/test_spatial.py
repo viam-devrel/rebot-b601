@@ -115,18 +115,6 @@ def test_rs_zero_pose_is_the_folded_rest_posture():
     assert z_up > 500
 
 
-def test_dm_aliases_still_point_at_the_dm_model():
-    dm = spatial.MODELS["dm"]
-    assert spatial.URDF_PATH == dm.urdf_path and spatial.REVOLUTE_JOINTS is dm.revolute
-    assert spatial.JOINT_EFFORT_NM == dm.effort_nm and spatial.LINK_ORDER is dm.link_order
-    assert spatial.end_position.__self__ is dm
-    assert spatial.gravity_torques.__self__ is dm
-    assert spatial.link_transforms.__self__ is dm
-    assert spatial.end_position([0] * 6) == dm.end_position([0] * 6)
-    assert spatial.gravity_torques([0] * 6) == dm.gravity_torques([0] * 6)
-    assert spatial.link_transforms([0] * 6) == dm.link_transforms([0] * 6)
-
-
 def test_rs_gravity_torques_mirror_dm():
     rs, dm = spatial.MODELS["rs"], spatial.MODELS["dm"]
     g = rs.gravity_torques([0.0] * 6)

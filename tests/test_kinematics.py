@@ -103,7 +103,7 @@ def test_gravity_torque_sign_and_magnitude():
     # The zero pose is the folded "sit-down" pose: the upper arm points back
     # and the forearm forward, so the elbow (joint3) carries the most load and
     # the shoulder (joint2) is partly counterbalanced.
-    g = spatial.gravity_torques([0.0] * 6)
+    g = DM.gravity_torques([0.0] * 6)
     assert abs(g[2]) == max(abs(v) for v in g) > 5.0
     assert abs(g[1]) > 0 and abs(g[3]) > 0
     # Base yaw joint never sees gravity torque with vertical gravity.
@@ -111,6 +111,6 @@ def test_gravity_torque_sign_and_magnitude():
     # Wrist roll/pitch axes are aligned with gravity at this pose.
     assert math.isclose(g[4], 0.0, abs_tol=1e-3) and math.isclose(g[5], 0.0, abs_tol=1e-3)  # URDF uses 1.5708 / 3.1415
     # A payload at the end effector (forward of the elbow) increases the elbow torque.
-    assert abs(spatial.gravity_torques([0.0] * 6, extra_payload_kg=1.0)[2]) > abs(g[2])
+    assert abs(DM.gravity_torques([0.0] * 6, extra_payload_kg=1.0)[2]) > abs(g[2])
     # Pointing the arm straight up (shoulder at -90) removes most of the load from the elbow.
-    assert abs(spatial.gravity_torques([0.0, math.radians(-90.0), 0.0, 0.0, 0.0, 0.0])[2]) < abs(g[2])
+    assert abs(DM.gravity_torques([0.0, math.radians(-90.0), 0.0, 0.0, 0.0, 0.0])[2]) < abs(g[2])

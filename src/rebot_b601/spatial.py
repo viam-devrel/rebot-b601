@@ -81,7 +81,7 @@ class _Joint:
         self.effort = float(limit.get("effort") or 0.0) if limit is not None else 0.0
 
 
-def load_chain(urdf_path=URDF_PATH):
+def load_chain(urdf_path):
     """Return the URDF joints ordered base -> end effector."""
     root = ET.parse(urdf_path).getroot()
     children = {j.find("parent").get("link"): j for j in root.findall("joint")}
@@ -209,7 +209,7 @@ class _LinkInertial:
         self.com = com_xyz
 
 
-def _load_links(urdf_path=URDF_PATH):
+def _load_links(urdf_path):
     """Return the link names in chain order (base -> end) and their inertials."""
     root = ET.parse(urdf_path).getroot()
     joints = root.findall("joint")
@@ -370,15 +370,3 @@ MODELS = {
     "dm": Model("dm", URDF_PATH, ASSETS_DIR, "gripper_base"),
     "rs": Model("rs", RS_URDF_PATH, ASSETS_DIR / "rs", "gripper_end"),
 }
-
-# The names the DM-only module exposed; kept as aliases so callers and tests that predate
-# the second variant keep working unchanged.
-_DM = MODELS["dm"]
-REVOLUTE_JOINTS = _DM.revolute
-JOINT_EFFORT_NM = _DM.effort_nm
-LINK_ORDER = _DM.link_order
-LINK_INERTIALS = _DM.link_inertials
-forward_kinematics = _DM.forward_kinematics
-link_transforms = _DM.link_transforms
-end_position = _DM.end_position
-gravity_torques = _DM.gravity_torques
