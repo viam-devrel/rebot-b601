@@ -30,8 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.rebot_b601 import spatial  # noqa: E402
-from src.rebot_b601.arm import VARIANT_VENDOR  # noqa: E402
-from src.rebot_b601.bus import BusError, SharedBus, detect_port  # noqa: E402
+from src.rebot_b601.bus import VARIANT_VENDOR, BusError, SharedBus, detect_port  # noqa: E402
 from src.rebot_b601.damiao import JointHealth  # noqa: E402
 
 NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "gripper"]

@@ -21,7 +21,16 @@ from viam.services.motion import MotionClient
 from viam.utils import struct_to_dict
 
 from . import kinematics, spatial
-from .bus import DEFAULT_BAUD, LINK_ERRORS, BusError, SharedBus, detect_port, is_motor_timeout
+from .bus import (
+    DEFAULT_BAUD,
+    LINK_ERRORS,
+    VARIANT_VENDOR,
+    VARIANTS,
+    BusError,
+    SharedBus,
+    detect_port,
+    is_motor_timeout,
+)
 from .damiao import CollisionError, JointHealth, MotorFault, OverTemperatureError
 from .ops import SingleOperationManager
 from .trajectory import MoveOptions, plan
@@ -44,8 +53,6 @@ DEFAULT_MIT_KP = [45.0, 45.0, 45.0, 8.0, 9.0, 8.0]
 DEFAULT_MIT_KD = [12.0, 12.0, 12.0, 1.0, 1.0, 1.0]
 # Soft limits (deg); slightly inside the URDF limits by default.
 DEFAULT_JOINT_LIMITS = [(-150.0, 150.0), (-179.0, 1.0), (-179.0, 1.0), (-107.0, 89.0), (-89.0, 89.0), (-179.0, 179.0)]
-VARIANT_VENDOR = {"dm": "damiao", "rs": "robstride"}
-VARIANTS = tuple(VARIANT_VENDOR)
 # B601-RS: Seeed's RobStride reference gains, and soft limits just inside the RS URDF
 # (joints 2 and 3 span 0..pi on that arm, the mirror of the DM arm; bench-confirmed
 # 2026-09-18, folding reads positive). The lower edge sits 5 deg below the URDF's 0

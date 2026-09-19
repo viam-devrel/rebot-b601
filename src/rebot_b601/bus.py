@@ -51,6 +51,9 @@ MOTOR_MODELS = {
     },
 }
 VENDORS = tuple(MOTOR_MODELS)
+# Config attribute value -> motor vendor. Both components read this.
+VARIANT_VENDOR = {"dm": "damiao", "rs": "robstride"}
+VARIANTS = tuple(VARIANT_VENDOR)
 FEEDBACK_ID_OFFSET = 0x10  # Damiao: motor 0x01 replies on 0x11, etc.
 ROBSTRIDE_HOST_ID = 0xFD  # RobStride: every motor addresses the host as 0xFD
 RID_ROBSTRIDE_MECH_POS = 0x7019  # RobStride mechPos parameter, rad
