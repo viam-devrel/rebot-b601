@@ -26,6 +26,7 @@ class FakeMotor:
         self.vendor = vendor
         self.pos = 0.0  # rad
         self.vel = 0.0  # rad/s
+        self.vel_noise = 0.0  # RobStride: a resting motor reported -0.150 rad/s on the bench
         self.torq = 0.0
         self.t_mos = 30.0
         self.t_rotor = 30.0
@@ -121,7 +122,7 @@ class FakeMotor:
             arbitration_id=self.feedback_id,
             status_code=self.status_code,
             pos=self.pos,
-            vel=self.vel,
+            vel=self.vel + self.vel_noise,
             torq=self.torq,
             t_mos=self.t_mos,
             t_rotor=self.t_rotor,

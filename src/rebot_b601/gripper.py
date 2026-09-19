@@ -1,14 +1,21 @@
-"""Viam gripper component for the reBot Arm B601-DM parallel gripper (motor 0x07).
+"""Viam gripper component for the reBot Arm B601 parallel gripper (motor 0x07).
 
 The gripper motor drives a leadscrew, so its native "position" is motor
-rotation in degrees: 0 deg is fully closed (the calibration pose) and about
--270 deg is fully open. It runs in FORCE_POS mode so grab force is capped by a
-torque ratio, letting it stall gently on an object.
+rotation in degrees: 0 deg is fully closed (the calibration pose) and the fully
+open angle is negative -- about -270 deg on the B601-DM, and whatever
+``open_position_deg`` measures on the B601-RS.
+
+The B601-DM runs in FORCE_POS mode, so grab force is capped by a torque ratio
+and the jaws stall gently on an object. RobStride has no force-limited position
+mode, so the B601-RS runs in profile position (POS_VEL) instead: the speed is a
+velocity limit and the firmware current limit is the only squeeze ceiling, so
+force commands and holding detection are not available there yet.
 
 Kinematic inputs (``get_current_inputs``/``go_to_inputs``) are the left
-finger's travel in metres (0 = closed, 0.05 = fully open), matching the one
-prismatic joint in the URDF served by ``get_kinematics``. Motor degrees are
-still available through the ``get``/``set`` DoCommands.
+finger's travel in metres (0 = closed, ``model.gripper.travel_m`` = fully
+open), matching the one prismatic joint in the URDF served by
+``get_kinematics``. Motor degrees are still available through the
+``get``/``set`` DoCommands.
 """
 
 import asyncio
@@ -53,7 +60,7 @@ DEFAULT_TORQUE_RATIO = 0.07  # max grip force in [0, 1]
 # If the gripper stalls at least this far (deg of motor rotation) short of the
 # fully-closed position, we consider it to be holding something.
 DEFAULT_HOLDING_THRESHOLD_DEG = 15.0
-DEFAULT_STALL_POLLS = 4  # consecutive near-zero-velocity polls that count as settled
+DEFAULT_STALL_POLLS = 4  # consecutive polls with no motion (DM: velocity; RS: position delta) that count as settled
 DEFAULT_MOVE_TIMEOUT_S = 6.0
 
 _ENSURE_MODE_RETRIES = 9
@@ -61,6 +68,7 @@ _SETTLE_SEC = 0.02
 _MOVING_VEL_RAD_S = 0.05
 _POLL_SEC = 0.05
 _ARRIVE_TOL_DEG = 2.0
+_RS_SETTLE_DELTA_DEG = 0.5  # a moving motor covers ~14 deg per poll at the 5 rad/s vlim, so this is a wide margin
 
 
 class B601Gripper(Gripper, EasyResource):
@@ -209,7 +217,7 @@ class B601Gripper(Gripper, EasyResource):
                 motor.enable()
                 for attempt in range(_ENSURE_MODE_RETRIES + 1):
                     try:
-                        motor.ensure_mode(Mode.FORCE_POS)
+                        motor.ensure_mode(Mode.POS_VEL if self.variant == "rs" else Mode.FORCE_POS)
                         break
                     except LINK_ERRORS as exc:
                         # A Damiao motor is busy answering enable() for a moment and
@@ -232,13 +240,16 @@ class B601Gripper(Gripper, EasyResource):
         self._torque_enabled = True
 
     def _state(self):
-        state = self._bus_call(self.bus.poll_feedback, [GRIPPER_CAN_ID])[GRIPPER_CAN_ID]
+        states = self._bus_call(
+            self.bus.poll_feedback, [GRIPPER_CAN_ID], positions_only=not self._torque_enabled
+        )
+        state = states[GRIPPER_CAN_ID]
         if state is None:
             raise BusError("no feedback from gripper motor 0x07; check power and wiring")
         return state
 
     def _check_ready(self, state):
-        health = JointHealth.from_state(GRIPPER_CAN_ID, state)
+        health = JointHealth.from_state(GRIPPER_CAN_ID, state, self.bus.vendor)
         if health.fault:
             if health.transient:
                 self._bus_call(self.bus.motor(GRIPPER_CAN_ID).clear_error)
@@ -253,8 +264,14 @@ class B601Gripper(Gripper, EasyResource):
         ratio = torque_ratio if torque_ratio is not None else self.torque_ratio
 
         def _do():
+            motor = self.bus.motor(GRIPPER_CAN_ID)
             with self.bus.lock:
-                self.bus.motor(GRIPPER_CAN_ID).send_force_pos(math.radians(target_deg), math.radians(speed), ratio)
+                if self.variant == "rs":
+                    # RobStride has no FORCE_POS; profile position keeps speed meaningful and
+                    # leaves the firmware current limit as the only squeeze ceiling.
+                    motor.send_pos_vel(math.radians(target_deg), math.radians(speed))
+                else:
+                    motor.send_force_pos(math.radians(target_deg), math.radians(speed), ratio)
 
         self._bus_call(_do)
 
@@ -277,11 +294,18 @@ class B601Gripper(Gripper, EasyResource):
             while time.monotonic() < deadline:
                 if cancel.is_set():
                     break
+                prev = pos
                 state = self._state()
                 pos = math.degrees(state.pos)
                 if abs(pos - target_deg) < _ARRIVE_TOL_DEG:
                     break
-                still = still + 1 if abs(state.vel) < _MOVING_VEL_RAD_S else 0
+                if self.variant == "rs":
+                    # RS velocity is not a measurement (a resting motor reads -0.15 rad/s),
+                    # so settling is judged by the position not changing.
+                    stopped = abs(pos - prev) < _RS_SETTLE_DELTA_DEG
+                else:
+                    stopped = abs(state.vel) < _MOVING_VEL_RAD_S
+                still = still + 1 if stopped else 0
                 if still >= self.stall_polls:
                     break  # stalled (on an object, or at the mechanical limit)
                 time.sleep(_POLL_SEC)
@@ -315,8 +339,10 @@ class B601Gripper(Gripper, EasyResource):
 
     async def grab(self, *, extra=None, timeout=None, **kwargs) -> bool:
         pos = await asyncio.to_thread(self._move_until_settled, self.closed_deg)
-        # Stalling well short of fully closed means the jaws met an object.
-        self._holding = abs(pos - self.closed_deg) > self.holding_threshold_deg
+        # Stalling well short of fully closed means the jaws met an object. Holding
+        # detection needs a force signal RS does not give and a threshold tuned on
+        # hardware; until then RS answers "cannot tell", encoded as False.
+        self._holding = False if self.variant == "rs" else abs(pos - self.closed_deg) > self.holding_threshold_deg
         return self._holding
 
     async def is_holding_something(self, *, extra=None, timeout=None, **kwargs) -> Gripper.HoldingStatus:
@@ -335,6 +361,10 @@ class B601Gripper(Gripper, EasyResource):
     async def is_moving(self) -> bool:
         if self.ops.running:
             return True
+        if self.variant == "rs":
+            # One sample cannot give a delta and RS velocity is unusable, so an in-flight
+            # operation is all we can honestly report. Same call the arm makes.
+            return False
         state = await asyncio.to_thread(self._state)
         return abs(state.vel) > _MOVING_VEL_RAD_S
 
@@ -346,7 +376,7 @@ class B601Gripper(Gripper, EasyResource):
         return kinematics.gripper_geometries(self.model, self.travel_m_from_deg(math.degrees(state.pos)))
 
     async def get_current_inputs(self, *, extra=None, timeout=None, **kwargs):
-        """Single input: left-finger travel in metres (0 = closed, 0.05 = fully open)."""
+        """Single input: left-finger travel in metres (0 = closed, model.gripper.travel_m = fully open)."""
         state = await asyncio.to_thread(self._state)
         return [self.travel_m_from_deg(math.degrees(state.pos))]
 
@@ -381,7 +411,7 @@ class B601Gripper(Gripper, EasyResource):
                 result[name] = "ok"
             elif name in ("raw_state", "get_state", "status", "health"):
                 state = await asyncio.to_thread(self._state)
-                h = JointHealth.from_state(GRIPPER_CAN_ID, state).as_dict()
+                h = JointHealth.from_state(GRIPPER_CAN_ID, state, self.bus.vendor).as_dict()
                 h["open_fraction"] = self.fraction_from_deg(h["pos_deg"])
                 h["holding"] = self._holding
                 result[name] = h
@@ -408,14 +438,29 @@ class B601Gripper(Gripper, EasyResource):
             elif name in ("get_speed", "get_gripper_speed"):
                 result[name] = self.speed_deg_s
             elif name in ("set_force", "set_torque", "set_gripper_torque"):
+                if self.variant == "rs":
+                    raise ValueError(
+                        f"'{name}' is not supported on the B601-RS yet: RobStride has no "
+                        "force-limited position mode, so there is no torque ratio to set"
+                    )
                 ratio = float(arg)
                 if not 0.0 < ratio <= 1.0:
                     raise ValueError("force/torque ratio must be in (0, 1]")
                 self.torque_ratio = ratio
                 result[name] = self.torque_ratio
             elif name in ("get_force", "get_torque", "get_gripper_torque"):
+                if self.variant == "rs":
+                    raise ValueError(
+                        f"'{name}' is not supported on the B601-RS yet: RobStride has no "
+                        "force-limited position mode, so there is no torque ratio to set"
+                    )
                 result[name] = self.torque_ratio
             elif name in ("grab_with_force", "grab_with_torque"):
+                if self.variant == "rs":
+                    raise ValueError(
+                        f"'{name}' is not supported on the B601-RS yet: RobStride has no "
+                        "force-limited position mode, so there is no torque ratio to set"
+                    )
                 params = arg if isinstance(arg, Mapping) else {}
                 if "fraction" in params:
                     target = self.deg_from_fraction(float(params["fraction"]))
