@@ -4,8 +4,8 @@
 
 ### Added
 - The gripper component runs on the B601-RS. `variant: "rs"` drives motor `0x07` (a RobStride rs-00) in
-  profile position (`POS_VEL`), because RobStride has no force-limited position mode: `speed_deg_s` is a
-  velocity limit and the firmware current limit is the only squeeze ceiling. RS requires `port` (the CAN
+  profile position (`POS_VEL`), because RobStride has no force-limited position mode: the module paces
+  the move itself (below) and the firmware current limit is the only squeeze ceiling. RS requires `port` (the CAN
   channel; the `arm` dependency is a gRPC client under viam-server and cannot supply it).
   `open_position_deg` defaults to 340 on RS, measured on the bench by jogging the jaw from closed to its
   hard stop. That default is only right if the motor was zeroed with the jaws closed, and a wrong value
@@ -23,24 +23,34 @@
 - Each variant's parallel-jaw geometry comes from `spatial.MODELS[variant].gripper`: finger travel is
   0.0715 m per finger on RS against 0.05 on DM, so the kinematic input range differs by variant. DM's
   served payloads are unchanged.
-- Settling is judged by variant: DM by near-zero velocity, RS by the position not changing (RS status
-  velocity is not a measurement; a resting motor reads -0.15 rad/s). `stall_polls` counts either.
+- Settling is judged by variant: DM by near-zero velocity, RS by the position not changing *and* the
+  streamed setpoints having run more than a tick's travel ahead of the jaw (RS status velocity is not a
+  measurement; a resting motor reads -0.15 rad/s). `stall_polls` counts either. The commanded-versus-
+  measured half is only available because the module now streams the move, and it is what tells a
+  stalled jaw from a slow one, which "the position stopped changing" on its own cannot.
 - The RS gripper's default `speed_deg_s` is 286.5 (5 rad/s, the vendor's limit) instead of DM's 900, and
   RS has its own upper bound of 573 deg/s (10 rad/s, twice the vendor's reference `vlim`) where DM keeps
   3000. DM's 3000 is 52 rad/s on a RobStride, an order of magnitude past anything an rs-00 does, so it
   capped nothing. The range is now enforced on the configured attribute as well as on `set_speed`, with
   a warning naming the clamp, instead of a nonsense config value being accepted in silence.
-- RS moves are sent with RobStride's dedicated profile-position frame,
-  `robstride_send_pos_vel_pp(pos, vel_max, acc_set)`, instead of the generic `send_pos_vel(pos, vlim)`.
-  `Mode.POS_VEL` on a RobStride already is native mode 2 (PP), so this makes the send match the mode
-  rather than changing modes; PP carries its speed as a per-command `vel_max`, which the generic frame
-  has no field for. **This is not a confirmed fix for `speed_deg_s`.** The bench saw 10, 60, 100 and
-  200 deg/s all move the jaw at the same rate through the generic frame, which says `limit_spd` is not
-  what governs speed here; that `vel_max` is, is the reading that follows, and only hardware can
-  confirm it. Acceleration is derived as `vel_max / 0.1 s` rather than configured, so the jaw reaches
-  the commanded rate in a tenth of a second; it becomes an attribute only if the bench asks for one.
-  `tests/smoke_hardware.py --gripper` now alternates the two send paths per step at `--gripper-speed`
-  and prints the path on each line, so the next bench run shows which one honours the speed.
+- **RS gripper speed is now controlled by the module pacing the setpoints, as the arm already does,
+  not by any motor parameter or command field.** An RS move is no longer one far-away target for the
+  firmware to plan: the gripper interpolates it with the same `trajectory.plan` the arm uses and
+  streams the result one setpoint per tick at 20 Hz, reading the jaw's position between ticks.
+  `speed_deg_s` is the spacing of those setpoints, so it works whatever the motor's internal profile
+  generator does. Three motor-side routes were tried on the bench first and none of them changed the
+  jaw's speed at 10, 60, 100 or 200 deg/s: the generic frame's velocity field, the `limit_spd`
+  parameter (`0x7017`) and the profile-position frame's per-command `vel_max`. Handed a distant target,
+  the motor plans the move at a rate of its own. The arm's `speed_deg_s` has always worked on this same
+  motor family for exactly that reason -- it never asks the motor to plan.
+  Moves still go out through RobStride's dedicated `robstride_send_pos_vel_pp(pos, vel_max, acc_set)`
+  frame, since `Mode.POS_VEL` already is native mode 2 (PP), but `vel_max` is now a per-hop ceiling at
+  twice the paced speed rather than the speed knob: enough headroom to reach the next setpoint within a
+  tick whether or not the firmware honours the field. `acc_set` stays `vel_max / 0.1 s`. Neither is an
+  attribute. `move_timeout_s` on RS is now slack past the planned duration of the move rather than the
+  whole budget, because at 10 deg/s a full-travel move legitimately takes half a minute.
+  DM is untouched: `send_force_pos` carries position, speed and force ratio in one frame and the
+  firmware honours all three, so one send really is the whole move there.
 - New RS attribute `grip_current_a`, default 1.0: an absolute grip current cap in amps, written to the
   motor's `limit_cur` parameter (RID `0x7018`) at configure. 1.0 A is bench-validated on a B601-RS
   against the motor's 16 A factory limit (1, 4, 5, 10 and 16 A were tried): at 1.0 A the jaw closes on a
@@ -77,12 +87,12 @@
   set the mode but never commanded a target, and a RobStride in profile position resumes its last
   internal setpoint, which after a restart is stale. It now reads the jaw position before enabling and
   commands exactly that, so the motor holds where it already is.
-- `speed_deg_s` reaches the motor by both routes RobStride offers. The `limit_spd` parameter (RID
-  `0x7017`, rad/s) is written at configure and again on `set_speed`, as Seeed's reference stack does,
-  and the value is now also carried as the PP frame's `vel_max` (above) -- the bench found writing the
-  parameter alone changed nothing. Each `limit_spd` write is logged with its read-back, as `limit_cur`
-  already was, and a read-back that disagrees is a warning: there was previously no way to tell from
-  the logs whether the speed cap had landed.
+- `speed_deg_s` changes how fast the RS jaw moves. It never did before, through any of the three
+  motor-side routes tried, because the gripper asked the motor to plan the move; the module now paces
+  it (above). The `limit_spd` write and its read-back logging are gone with it: the parameter never had
+  an observable effect, and a speed cap written at exactly the paced speed would only rob the jaw of
+  the headroom it needs to keep up with its own setpoints. `set_speed` no longer writes anything to the
+  motor -- the next move's setpoint spacing is the speed.
 - The RS jaw no longer crushes semi-stiff objects, nor grinds itself into a HALL encoder fault. Two
   causes: nothing capped the motor current (now `grip_current_a` -> `limit_cur`, above), and
   `_move_until_settled` returned
@@ -102,7 +112,7 @@
 - The RS stall re-command only fires when the jaw was actually seen to move and then stop. If no poll
   ever showed movement, the reading is the suspect part, not the jaw, and commanding a position from it
   turns a bad read into a physical reversal; the move now logs a warning naming stale or unresponsive
-  feedback and leaves the commanded target alone.
+  feedback and lets the setpoints stop where they are instead.
 - `tests/smoke_hardware.py --gripper` prints both reads per step -- the streamed frame and the `mechPos`
   parameter read, each with the time since the command was sent, plus a second `mechPos` read half a
   second later. A `param` column that tracks the target while `stream` trails it means the read is

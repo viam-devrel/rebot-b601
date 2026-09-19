@@ -7,14 +7,22 @@ B601-DM and +340 deg on the B601-RS, both measured from a zero set with the
 jaws closed.
 
 The B601-DM runs in FORCE_POS mode, so grab force is capped by a torque ratio
-and the jaws stall gently on an object. RobStride has no force-limited position
-mode, so the B601-RS runs in profile position (POS_VEL, RobStride's native mode 2,
-PP) instead, where the speed is the per-command ``vel_max`` of the dedicated
-``robstride_send_pos_vel_pp`` frame and grip force is capped by ``limit_cur``,
-an absolute current limit set by the ``grip_current_a`` attribute. That is a
-different knob from DM's ``torque_ratio``, not the same one in other units, so
-RS has its own attribute and ignores ``torque_ratio``. Force commands and
-holding detection are still not available there.
+and the jaws stall gently on an object; one ``send_force_pos`` carries position,
+speed and force together, so a single send is the whole move.
+
+RobStride has no force-limited position mode, so the B601-RS runs in profile
+position (POS_VEL, RobStride's native mode 2, PP) instead, and there nothing the
+module can put in a frame or a parameter sets the speed: the bench tried the
+generic frame's velocity field, the ``limit_spd`` parameter and the PP frame's
+``vel_max``, and 10 to 200 deg/s looked identical through all three. So RS moves
+are not one far-away target for the firmware to plan; the module interpolates
+them with ``trajectory.plan`` and streams one setpoint per tick, exactly as
+``arm.py`` does, and ``speed_deg_s`` is the spacing of those setpoints. Grip
+force is capped by ``limit_cur``, an absolute current limit set by the
+``grip_current_a`` attribute. That is a different knob from DM's
+``torque_ratio``, not the same one in other units, so RS has its own attribute
+and ignores ``torque_ratio``. Force commands and holding detection are still not
+available there.
 
 Kinematic inputs (``get_current_inputs``/``go_to_inputs``) are the left
 finger's travel in metres (0 = closed, ``model.gripper.travel_m`` = fully
@@ -50,6 +58,7 @@ from .bus import (
 )
 from .damiao import JointHealth, MotorFault
 from .ops import SingleOperationManager
+from .trajectory import MoveOptions, plan
 
 LOGGER = getLogger(__name__)
 
@@ -72,12 +81,18 @@ MAX_SPEED_DEG_S = 3000.0  # DM's fast leadscrew, whose default is 900
 # so allow twice that: headroom above the vendor figure without pretending a speed the motor
 # cannot reach is configurable.
 RS_MAX_SPEED_DEG_S = math.degrees(10.0)
-# RobStride's PP frame carries an acceleration as well as vel_max. Derived from the speed rather
-# than configured: acc = speed / RS_ACC_RAMP_S, so the jaw reaches whatever rate was asked for in
-# RS_ACC_RAMP_S seconds. 0.1 s is under a tenth of a full-travel move (340 deg at the vendor's
-# 5 rad/s takes ~1.2 s), so it is still a ramp rather than a step. It becomes an attribute only
-# if the bench asks for one.
+# The acceleration, for both the planned ramp and the PP frame's acc_set. Derived from the speed
+# rather than configured: acc = speed / RS_ACC_RAMP_S, so the jaw reaches whatever rate was asked
+# for in RS_ACC_RAMP_S seconds. 0.1 s is under a tenth of a full-travel move (340 deg at the
+# vendor's 5 rad/s takes ~1.2 s), so it is still a ramp rather than a step. It becomes an
+# attribute only if the bench asks for one.
 RS_ACC_RAMP_S = 0.1
+# The module paces RS moves setpoint by setpoint (see _stream_until_settled), so the PP frame's
+# vel_max is no longer the speed knob -- it is the ceiling for the hop to the next setpoint, and
+# a hop of one tick's travel has to fit in one tick. Commanding it at exactly the paced speed
+# would leave no headroom for the frame's own acceleration ramp and the jaw would trail its
+# setpoints forever, so the frame asks for twice the paced speed.
+RS_TRACK_HEADROOM = 2.0
 DEFAULT_TORQUE_RATIO = 0.07  # DM: max grip force in [0, 1], a fraction of the motor's rated torque
 # RS: the absolute grip current cap in amps, written to limit_cur. 1.0 A is bench-validated on a
 # B601-RS against the motor's 16 A factory limit (1, 4, 5, 10 and 16 A were all tried): at 1.0 A
@@ -110,12 +125,11 @@ _RS_UNSUPPORTED = frozenset(
     }
 )
 _RS_SETTLE_DELTA_DEG = 0.5  # a moving motor covers ~14 deg per poll at the 5 rad/s vlim, so this is a wide margin
-# RobStride parameter ids. limit_spd is confirmed by Seeed's reference stack
-# (reBotArm_control_py/actuator/rebotarm.py:311); limit_cur is its neighbour in the standard
-# RobStride parameter table, between limit_spd and mechPos (0x7019, which this module already
-# uses), and motorbridge's native library lists the same name in the same place. It is still
-# inferred, so every write is read back and logged: see _write_rs_limits.
-RS_RID_LIMIT_SPD = 0x7017
+# RobStride parameter id. limit_cur is the neighbour of limit_spd (0x7017, confirmed by Seeed's
+# reference stack, reBotArm_control_py/actuator/rebotarm.py:311) in the standard RobStride
+# parameter table, one before mechPos (0x7019, which this module already uses), and motorbridge's
+# native library lists the same name in the same place. It is still inferred, so the write is
+# read back and logged: see _write_grip_current.
 RS_RID_LIMIT_CUR = 0x7018
 _FAULT_HINT = 'fix the cause, then send {"clear_errors": true} to this gripper'
 
@@ -286,33 +300,17 @@ class B601Gripper(Gripper, EasyResource):
         except Exception:
             return float("nan")
 
-    def _write_rs_limits(self, motor):
+    def _write_grip_current(self, motor):
         """RobStride's squeeze ceiling is the limit_cur parameter, which no command frame carries.
-        limit_spd is written too, as Seeed's stack does, but the bench found speed_deg_s from 10 to
-        200 deg/s making no visible difference, so in profile position the governing speed is
-        probably the PP frame's per-command vel_max and not this parameter (see _send_target).
-        Writing it is harmless and it is read back, so if it does matter it is set and visible.
+
+        limit_spd (0x7017) used to be written here too, as Seeed's stack does. It is not any more:
+        the bench found speed_deg_s from 10 to 200 deg/s making no visible difference through it,
+        the module now paces the move itself, and a speed cap written at exactly the paced speed
+        would only rob the jaw of the headroom it needs to reach the next setpoint in time.
 
         limit_cur is written as an absolute current, never derived from what the motor already
         holds: deriving it would mean re-reading a value we wrote ourselves, and every restart
         would ratchet the cap down."""
-        spd = math.radians(self.speed_deg_s)
-        motor.robstride_write_param_f32(RS_RID_LIMIT_SPD, spd)
-        got_spd = self._read_param(motor, RS_RID_LIMIT_SPD)
-        LOGGER.info(
-            "gripper limit_spd (RID 0x%04X) set to %.3f rad/s (%.1f deg/s) from speed_deg_s, read back %.3f rad/s",
-            RS_RID_LIMIT_SPD,
-            spd,
-            self.speed_deg_s,
-            got_spd,
-        )
-        if not abs(got_spd - spd) <= max(0.05, 0.02 * spd):
-            LOGGER.warning(
-                "gripper limit_spd read back %.3f rad/s, not the %.3f rad/s written: the speed "
-                "cap did not land, so speed_deg_s may be doing nothing",
-                got_spd,
-                spd,
-            )
         was = self._read_param(motor, RS_RID_LIMIT_CUR)
         try:
             motor.robstride_write_param_f32(RS_RID_LIMIT_CUR, self.grip_current_a)
@@ -375,7 +373,7 @@ class B601Gripper(Gripper, EasyResource):
                     # RobStride motors stream status frames (and so fill get_state)
                     # only once asked to; without this, every read is a param round-trip.
                     motor.robstride_set_active_report(True)
-                    self._write_rs_limits(motor)
+                    self._write_grip_current(motor)
                     if hold is not None:
                         self._rs_send(motor, hold.pos, math.radians(self.speed_deg_s))
                     else:
@@ -439,17 +437,17 @@ class B601Gripper(Gripper, EasyResource):
         self._bus_call(_do)
 
     def _rs_send(self, motor, pos_rad: float, speed_rad_s: float):
-        """The dedicated profile-position frame, not the generic send_pos_vel one.
+        """The dedicated profile-position frame, not the generic send_pos_vel one: Mode.POS_VEL on
+        a RobStride already *is* native mode 2 (PP), so this matches the send to the mode we
+        selected rather than changing modes.
 
-        Mode.POS_VEL on a RobStride already *is* native mode 2 (PP), so this matches the send to
-        the mode we selected rather than changing modes. It matters because PP takes vel_max per
-        command, and the generic frame has nowhere to put it: on the bench 2026-09-19 speed_deg_s
-        at 10, 60, 100 and 200 deg/s all moved the jaw at the same rate through send_pos_vel.
-        That the dedicated call carries vel_max is fact; that it is why speed did nothing is a
-        hypothesis only hardware can confirm -- tests/smoke_hardware.py --gripper alternates the
-        two send paths so a bench run can tell them apart.
+        Its vel_max is not what makes the jaw fast or slow -- the spacing of the setpoints is (see
+        _stream_until_settled). It is kept as a per-hop ceiling with RS_TRACK_HEADROOM of slack, so
+        that whether or not this firmware honours it, the motor can always reach the next setpoint
+        within a tick.
         """
-        motor.robstride_send_pos_vel_pp(pos_rad, speed_rad_s, speed_rad_s / RS_ACC_RAMP_S)
+        vel_max = speed_rad_s * RS_TRACK_HEADROOM
+        motor.robstride_send_pos_vel_pp(pos_rad, vel_max, vel_max / RS_ACC_RAMP_S)
 
     def _clamp_speed(self, speed_deg_s: float) -> float:
         """The ceiling is per variant: see RS_MAX_SPEED_DEG_S. Applied to the configured value as
@@ -472,65 +470,134 @@ class B601Gripper(Gripper, EasyResource):
         return max(lo, min(hi, float(target_deg)))
 
     def _move_until_settled(self, target_deg: float, speed_deg_s=None, torque_ratio=None) -> float:
-        """Command target and wait for stall or arrival; returns final position (deg)."""
+        """Command target and wait for stall or arrival; returns final position (deg).
+
+        DM sends the whole move in one frame: send_force_pos carries position, speed and force
+        ratio together and the firmware honours all three. RS cannot, so it streams (below).
+        """
         with self.ops.new() as cancel:
             state = self._state()
             self._check_ready(state)
             target_deg = self._clamp_deg(target_deg)
+            if self.variant == "rs":
+                live = self._live_state()
+                start = math.degrees((live if live is not None else state).pos)
+                speed = self._clamp_speed(speed_deg_s) if speed_deg_s is not None else self.speed_deg_s
+                return self._stream_until_settled(target_deg, start, speed, cancel)
             self._send_target(target_deg, speed_deg_s, torque_ratio)
             deadline = time.monotonic() + self.move_timeout_s
             still = 0
-            moved = False
             pos = math.degrees(state.pos)
             # Give it a moment to start moving before stall detection kicks in.
             time.sleep(0.2)
             while time.monotonic() < deadline:
                 if cancel.is_set():
                     break
-                state = self._live_state()
-                if state is None:
-                    # RS mechPos timed out: no sample this tick. Counting it as "stopped"
-                    # would make a quiet bus indistinguishable from a stall, so the streak
-                    # restarts instead. The read already blocked for _MECHPOS_TIMEOUT_MS and
-                    # move_timeout_s still bounds the loop.
-                    still = 0
-                    time.sleep(_POLL_SEC)
-                    continue
-                prev = pos
+                state = self._state()
                 pos = math.degrees(state.pos)
                 if abs(pos - target_deg) < _ARRIVE_TOL_DEG:
                     break
-                if self.variant == "rs":
-                    # RS velocity is not a measurement (a resting motor reads -0.15 rad/s),
-                    # so settling is judged by the position not changing.
-                    stopped = abs(pos - prev) < _RS_SETTLE_DELTA_DEG
-                else:
-                    stopped = abs(state.vel) < _MOVING_VEL_RAD_S
-                moved = moved or not stopped
-                still = still + 1 if stopped else 0
+                still = still + 1 if abs(state.vel) < _MOVING_VEL_RAD_S else 0
                 if still >= self.stall_polls:
                     break  # stalled (on an object, or at the mechanical limit)
                 time.sleep(_POLL_SEC)
             self._last_stall_deg = pos
-            if self.variant == "rs" and not cancel.is_set() and abs(pos - target_deg) >= _ARRIVE_TOL_DEG:
-                # The move is over but the jaws never got there, so profile position is still
-                # driving at an unreachable target and grinds into the object until it faults.
-                # Hold where it actually stopped. Not done on DM: FORCE_POS caps the current by
-                # design, and that standing push is how a DM grab keeps its grip on the object.
-                if moved:
-                    self._send_target(pos)
-                else:
-                    # Never seeing the jaw move means the readings are the suspect part, not the
-                    # jaw. Re-commanding one would turn a bad read into a physical reversal --
-                    # the 0.6.0 bench failure where open() drove straight back to closed.
-                    LOGGER.warning(
-                        "gripper never moved off %.1f deg while driving to %.1f: feedback is stale "
-                        "or the motor is unresponsive, so the target is left as commanded rather "
-                        "than re-issued from a reading we do not trust",
-                        pos,
-                        target_deg,
-                    )
             return pos
+
+    def _plan_setpoints(self, start_deg: float, target_deg: float, speed_deg_s: float) -> List[float]:
+        """The move, interpolated here instead of by the motor: one setpoint per tick at
+        1/_POLL_SEC Hz, spaced so the jaw covers speed_deg_s.
+
+        The same trajectory.plan the arm uses. One jaw is one degree of freedom, so every
+        per-joint list is length 1 and every setpoint comes back as a 1-element list.
+        """
+        opts = MoveOptions(
+            vmax_deg_s=[speed_deg_s],
+            amax_deg_s2=[speed_deg_s / RS_ACC_RAMP_S],
+            hz=1.0 / _POLL_SEC,
+        )
+        return [q[0] for q in plan([start_deg], [[target_deg]], opts)]
+
+    def _stream_until_settled(self, target_deg: float, start_deg: float, speed_deg_s: float, cancel) -> float:
+        """RS: pace the move here, one setpoint per tick, the way arm.py does.
+
+        Handed a far-away target a RobStride plans the move itself, and nothing the module can set
+        changes how fast it plans it: the bench tried the generic frame's velocity field, the
+        limit_spd parameter and the PP frame's vel_max, and speed_deg_s from 10 to 200 deg/s looked
+        the same through all three. The arm never had that problem because it never asks the motor
+        to plan -- speed lives in the spacing of the setpoints, which works whatever the firmware's
+        own profile generator does. This is that loop, for one joint.
+
+        Position is still read with the mechPos round trip (_live_state): the streamed frame runs
+        about half a second behind the motor, which during a move reads as "stopped".
+        """
+        # A run of the target after the plan: the jaw is up to a tick behind the last setpoint,
+        # and the stall test needs a few ticks against a fixed point to conclude.
+        planned = self._plan_setpoints(start_deg, target_deg, speed_deg_s)
+        points = planned + [target_deg] * (self.stall_polls + 1)
+        # move_timeout_s is slack past the planned duration rather than the whole budget: at
+        # 10 deg/s a full-travel move legitimately takes half a minute.
+        deadline = time.monotonic() + len(points) * _POLL_SEC + self.move_timeout_s
+        # Stalled means the setpoints have run away from the jaw *and* the jaw is not moving.
+        # Streaming is what makes the first half available; "the position stopped changing" on its
+        # own cannot tell a stalled jaw from a slow one. The tolerance is one tick of travel, so
+        # the worst the motor is ever asked for past a stalled jaw is stall_polls ticks of it.
+        lag_tol = max(_ARRIVE_TOL_DEG, speed_deg_s * _POLL_SEC)
+        pos = start_deg
+        moved = False
+        still = 0
+        anchor = time.monotonic()
+        for k, cmd in enumerate(points):
+            if cancel.is_set() or time.monotonic() > deadline:
+                break
+            due = anchor + k * _POLL_SEC
+            while True:
+                now = time.monotonic()
+                if now >= due or cancel.is_set():
+                    break
+                time.sleep(min(due - now, 0.005))
+            if cancel.is_set():
+                break
+            self._send_target(cmd, speed_deg_s)
+            state = self._live_state()
+            if state is None:
+                # mechPos timed out: no sample this tick. Counting it as "stopped" would make a
+                # quiet bus indistinguishable from a stall, so the streak restarts instead. The
+                # read already blocked for bus._MECHPOS_TIMEOUT_MS and the deadline still bounds
+                # the loop.
+                still = 0
+                continue
+            prev, pos = pos, math.degrees(state.pos)
+            moved = moved or abs(pos - prev) >= _RS_SETTLE_DELTA_DEG
+            # Arrival only ends the trailing run: the plan is streamed out in full, so the last
+            # thing the motor is asked for is the target itself and not the setpoint before it.
+            if k + 1 >= len(planned) and abs(pos - target_deg) < _ARRIVE_TOL_DEG:
+                break
+            # Against the *previous* setpoint: the jaw cannot have reached the one just sent.
+            behind = k > 0 and abs(points[k - 1] - pos) > lag_tol
+            still = still + 1 if behind and abs(pos - prev) < _RS_SETTLE_DELTA_DEG else 0
+            if still >= self.stall_polls:
+                break  # stalled (on an object, or at the mechanical limit)
+        self._last_stall_deg = pos
+        if not cancel.is_set() and abs(pos - target_deg) >= _ARRIVE_TOL_DEG:
+            # The stream stopped short, so the motor is still driving at a setpoint the jaw cannot
+            # reach and would grind into the object until it faults. Hold where it actually
+            # stopped. Not done on DM: FORCE_POS caps the current by design, and that standing
+            # push is how a DM grab keeps its grip on the object.
+            if moved:
+                self._send_target(pos, speed_deg_s)
+            else:
+                # Never seeing the jaw move means the readings are the suspect part, not the jaw.
+                # Re-commanding one would turn a bad read into a physical reversal -- the 0.6.0
+                # bench failure where open() drove straight back to closed.
+                LOGGER.warning(
+                    "gripper never moved off %.1f deg while driving to %.1f: feedback is stale "
+                    "or the motor is unresponsive, so the setpoints stop where they are rather "
+                    "than being re-issued from a reading we do not trust",
+                    pos,
+                    target_deg,
+                )
+        return pos
 
     # ------------------------------------------------- unit conversions
 
@@ -664,15 +731,8 @@ class B601Gripper(Gripper, EasyResource):
                 pos = await asyncio.to_thread(self._move_until_settled, target)
                 result[name] = {"pos_deg": pos, "open_fraction": self.fraction_from_deg(pos)}
             elif name in ("set_speed", "set_gripper_speed"):
+                # RS needs no write: the next move's setpoint spacing is the speed.
                 self.speed_deg_s = self._clamp_speed(float(arg))
-                if self.variant == "rs":
-                    # limit_spd is a parameter, not a command field, so a live change needs a write.
-                    # The profile-position frames that follow carry the new speed as vel_max anyway.
-                    def _limits():
-                        with self.bus.lock:
-                            self._write_rs_limits(self.bus.motor(GRIPPER_CAN_ID))
-
-                    await asyncio.to_thread(self._bus_call, _limits)
                 result[name] = self.speed_deg_s
             elif name in ("get_speed", "get_gripper_speed"):
                 result[name] = self.speed_deg_s

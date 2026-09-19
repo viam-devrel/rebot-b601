@@ -15,7 +15,7 @@ from src.rebot_b601.gripper import (
     RS_MAX_SPEED_DEG_S,
     RS_OPEN_DEG,
     RS_RID_LIMIT_CUR,
-    RS_RID_LIMIT_SPD,
+    RS_TRACK_HEADROOM,
     B601Gripper,
 )
 from tests.conftest import make_config
@@ -105,15 +105,6 @@ def test_dm_does_not_command_a_hold_at_configure(gripper):
     assert motor.commands == []
 
 
-async def test_rs_writes_limit_spd_at_configure_and_on_set_speed(rs_gripper):
-    """RobStride takes its speed cap from limit_spd (0x7017), not from the send_pos_vel field."""
-    g, motor = rs_gripper
-    assert motor.params[RS_RID_LIMIT_SPD] == pytest.approx(math.radians(g.speed_deg_s))
-    assert RS_RID_LIMIT_SPD in [rid for rid, _ in motor.param_writes]
-    await g.do_command({"set_speed": 100.0})
-    assert motor.params[RS_RID_LIMIT_SPD] == pytest.approx(math.radians(100.0))
-
-
 def test_rs_clamps_the_configured_speed_and_warns(factory, caplog):
     """The bench config carried speed_deg_s: 3000 -- 52 rad/s, far past the motor -- and nothing
     said so, because only set_speed enforced the range."""
@@ -121,38 +112,12 @@ def test_rs_clamps_the_configured_speed_and_warns(factory, caplog):
         g = B601Gripper.new(make_config("gripper", **RS, speed_deg_s=3000.0), {})
     assert g.speed_deg_s == pytest.approx(RS_MAX_SPEED_DEG_S)
     assert any("clamped" in r.getMessage() for r in caplog.records)
-    motor = factory.latest.motors[GRIPPER_CAN_ID]
-    assert motor.params[RS_RID_LIMIT_SPD] == pytest.approx(math.radians(RS_MAX_SPEED_DEG_S))
 
 
 def test_dm_keeps_the_faster_leadscrew_ceiling(factory):
     assert RS_MAX_SPEED_DEG_S < MAX_SPEED_DEG_S
     g = B601Gripper.new(make_config("gripper", port="/dev/fake0", speed_deg_s=3000.0), {})
     assert g.speed_deg_s == pytest.approx(MAX_SPEED_DEG_S)
-
-
-def test_rs_logs_the_limit_spd_write_and_its_read_back(factory, caplog):
-    """Nothing in the logs showed whether the speed cap landed; limit_cur's line already does."""
-    with caplog.at_level(logging.INFO, logger="src.rebot_b601.gripper"):
-        B601Gripper.new(make_config("gripper", **RS), {})
-    line = next(r.getMessage() for r in caplog.records if "limit_spd" in r.getMessage())
-    assert "0x7017" in line
-    assert "read back" in line
-
-
-async def test_rs_warns_when_limit_spd_does_not_read_back(rs_gripper, caplog):
-    g, motor = rs_gripper
-    real = motor.robstride_write_param_f32
-
-    def drops_the_speed_write(param_id, value):
-        if param_id != RS_RID_LIMIT_SPD:
-            real(param_id, value)
-
-    motor.robstride_write_param_f32 = drops_the_speed_write
-    motor.params[RS_RID_LIMIT_SPD] = 0.0
-    with caplog.at_level(logging.WARNING, logger="src.rebot_b601.gripper"):
-        await g.do_command({"set_speed": 100.0})
-    assert any("limit_spd read back" in r.getMessage() for r in caplog.records)
 
 
 def test_rs_writes_grip_current_a_to_limit_cur(factory):
@@ -191,23 +156,43 @@ def test_torque_ratio_on_rs_warns_and_points_at_grip_current(factory, caplog):
 
 async def test_rs_moves_send_profile_position_not_force_pos(rs_gripper):
     """The dedicated PP frame, not the generic pos_vel one: Mode.POS_VEL on a RobStride is native
-    mode 2 (PP), whose vel_max is per command. speed_deg_s at 10-200 through send_pos_vel moved
-    the jaw at one rate on the bench, so the generic frame evidently carries no speed."""
+    mode 2 (PP). Its vel_max no longer sets the speed -- the setpoint spacing does -- so it goes
+    out with RS_TRACK_HEADROOM of slack, enough to reach the next setpoint within a tick whether
+    or not the firmware honours it."""
     g, motor = rs_gripper
     await g.open()
     assert {c[0] for c in motor.commands} == {"pos_vel_pp"}
     _, pos, vel_max, acc = motor.commands[-1]
     assert pos == pytest.approx(math.radians(g.open_deg))
-    assert vel_max == pytest.approx(math.radians(g.speed_deg_s))
-    assert acc == pytest.approx(math.radians(g.speed_deg_s) / RS_ACC_RAMP_S)
+    assert vel_max == pytest.approx(math.radians(g.speed_deg_s) * RS_TRACK_HEADROOM)
+    assert acc == pytest.approx(vel_max / RS_ACC_RAMP_S)
 
 
-async def test_rs_speed_reaches_the_frame_not_only_the_parameter(rs_gripper):
-    """set_speed has to change what the next move commands, not just limit_spd."""
+def test_rs_speed_is_the_spacing_of_the_setpoints(rs_gripper):
+    """The fix for speed_deg_s. Every knob RobStride offers was tried -- the generic frame's
+    velocity field, limit_spd, the PP frame's vel_max -- and 10 to 200 deg/s looked identical
+    on the bench, because the *motor* was planning the move. Plan it here, as the arm does, and
+    a tenth of the speed is ten times the setpoints."""
+    g, _ = rs_gripper
+    slow = g._plan_setpoints(0.0, -120.0, 10.0)
+    fast = g._plan_setpoints(0.0, -120.0, 100.0)
+    assert len(slow) > 8 * len(fast)
+    assert slow == sorted(slow, reverse=True), "setpoints must walk from start to target"
+    assert slow[0] > -5.0 and slow[-1] == pytest.approx(-120.0)
+
+
+async def test_rs_streams_the_move_instead_of_one_far_target(rs_gripper):
+    """End to end: a move is many setpoints, and a slower speed_deg_s is more of them."""
     g, motor = rs_gripper
-    await g.do_command({"set_speed": 100.0})
-    await g.open()
-    assert motor.commands[-1][2] == pytest.approx(math.radians(100.0))
+    motor.commands.clear()
+    await g.do_command({"set": {"deg": -20.0}})
+    fast = [math.degrees(c[1]) for c in motor.commands]
+    assert len(fast) > 1, "one setpoint: the motor is still the one planning the move"
+    assert fast == sorted(fast, reverse=True)
+    await g.do_command({"set_speed": 30.0})
+    motor.commands.clear()
+    await g.do_command({"set": {"deg": 0.0}})
+    assert len(motor.commands) > 3 * len(fast)
 
 
 async def test_rs_settles_on_position_delta_despite_velocity_noise(rs_gripper):
@@ -285,6 +270,21 @@ async def test_rs_recommands_the_position_the_jaws_reached_after_a_stall(rs_grip
     assert math.degrees(pos) != pytest.approx(g.closed_deg, abs=1.0)
 
 
+async def test_rs_stall_stops_the_stream_and_holds_where_the_jaw_stopped(rs_gripper):
+    """Streaming makes the stall obvious -- the setpoints run away from the jaw -- and the last
+    thing sent must be the angle the jaw actually reached, not a setpoint past the object."""
+    g, motor = rs_gripper
+    motor.pos = motor.target = math.radians(g.open_deg)  # at rest, fully open
+    await g.do_command({"set_speed": 30.0})  # slow enough that a tick is 1.5 deg
+    motor.stall_at = math.radians(-100.0)  # an object, 20 deg into a 120 deg close
+    motor.commands.clear()
+    pos = await asyncio.to_thread(g._move_until_settled, g.closed_deg)
+    assert pos == pytest.approx(-100.0, abs=1.0)
+    sent = [math.degrees(c[1]) for c in motor.commands]
+    assert sent[-1] == pytest.approx(-100.0, abs=1.0), "did not hold at the measured position"
+    assert max(sent[:-1]) < -50.0, "kept streaming toward the target after the jaw stopped"
+
+
 async def test_rs_does_not_recommand_when_the_jaws_arrive(rs_gripper):
     g, motor = rs_gripper
     await g.open()
@@ -311,8 +311,9 @@ async def test_rs_does_not_recommand_a_position_it_never_saw_move(rs_gripper, ca
     motor.commands.clear()
     with caplog.at_level(logging.WARNING, logger="src.rebot_b601.gripper"):
         await asyncio.to_thread(g._move_until_settled, g.open_deg)
-    assert len(motor.commands) == 1, "re-commanded from a reading that never showed movement"
-    assert motor.commands[0][1] == pytest.approx(math.radians(g.open_deg))
+    sent = [math.degrees(c[1]) for c in motor.commands]
+    assert sent == sorted(sent, reverse=True), "a setpoint went backwards: the stale reading was re-commanded"
+    assert sent[-1] > g.open_deg, "kept streaming to the target through a stall"
     assert any("stale" in r.getMessage() for r in caplog.records)
 
 

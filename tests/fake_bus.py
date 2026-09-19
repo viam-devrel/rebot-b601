@@ -55,8 +55,9 @@ class FakeMotor:
         # that lag, and enough to tell a stale read from a slow motor.
         self.stream_lag = False
         self.param_reads = 0
-        # RobStride RW parameters the module writes: limit_spd (rad/s) and limit_cur (A).
-        # The limit_cur value stands in for the motor's factory current limit.
+        # RobStride RW parameters: limit_spd (rad/s), which the module reads but no longer
+        # writes, and limit_cur (A), which it does. The limit_cur value stands in for the
+        # motor's factory current limit.
         self.params: Dict[int, float] = {0x7017: 5.0, 0x7018: 4.0}
         self.param_writes: List[tuple] = []
         self._frozen = None  # RobStride: the last frame, served after disable() like the real cache

@@ -131,15 +131,12 @@ def jog_gripper():
     # is genuinely slow -- and then 'later' has climbed past 'param' because it is still moving.
     print("  stream = streamed status frame, param = mechPos round trip, later = mechPos again")
     if vendor == "robstride":
-        # Bench 2026-09-19: speed_deg_s at 10, 60, 100 and 200 deg/s all moved the jaw at the
-        # same rate, which says limit_spd (0x7017) is not what governs speed in this mode.
-        # RobStride's POS_VEL is native mode 2 (PP) and the dedicated frame carries vel_max per
-        # command; the generic one has nowhere to put it. Steps alternate the two paths at the
-        # same commanded speed, so one run settles which is which: whichever path moves the jaw
-        # visibly slower is the one obeying --gripper-speed.
-        print(f"  pp / generic alternate per step, both commanded at {args.gripper_speed:.0f} deg/s")
-    paths = ["pp", "generic"] if vendor == "robstride" else ["force_pos"]
-    sends = 0
+        # One raw PP send per step, for reading the open angle off the hard stop. It is not how
+        # the module moves the jaw any more: nothing a frame or a parameter carried changed the
+        # speed on the bench, so the gripper now paces the move itself, setpoint by setpoint
+        # (gripper._stream_until_settled). --gripper-speed here is only this jog's vel_max.
+        print(f"  one raw pp send per step at {args.gripper_speed:.0f} deg/s (not the module's paced move)")
+    path = "pp" if vendor == "robstride" else "force_pos"
     while True:
         raw = input(f"step [{step:+.1f}] > ").strip()
         if raw.lower() == "q":
@@ -151,14 +148,10 @@ def jog_gripper():
                 print("  not a number")
                 continue
         target += step
-        path = paths[sends % len(paths)]
-        sends += 1
         sent = time.monotonic()
         with bus.lock:
             if path == "pp":
                 motor.robstride_send_pos_vel_pp(math.radians(target), jog_vel, jog_vel / RS_ACC_RAMP_S)
-            elif path == "generic":
-                motor.send_pos_vel(math.radians(target), jog_vel)
             else:
                 motor.send_force_pos(math.radians(target), jog_vel, 0.07)
         time.sleep(0.5)
