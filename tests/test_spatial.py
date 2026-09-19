@@ -170,6 +170,23 @@ def test_model_still_constructs_positionally():
     assert m.gripper.travel_m == 0.05  # the default spec, not RS's
 
 
+# Captured before the frame split. The served arm chain is about to stop at the tool mount
+# (link6), but the bundled URDF keeps end_joint and the mount plate (end_link), so these must
+# not move: the mount plate's mass (0.5 kg DM, 0.65 kg RS) still loads the joints. A change
+# here means the trim reached the physical model, which would under-compensate manual mode
+# with no visible symptom.
+GRAVITY_AT_ZERO = {
+    "dm": [0.0, 1.2831, 7.1806, 1.9798, 0.0, -0.0003],
+    "rs": [0.0, -1.8702, -6.0873, -1.6621, 0.0, 0.0008],
+}
+
+
+@pytest.mark.parametrize("name", ["dm", "rs"])
+def test_gravity_at_zero_survives_the_frame_split(name):
+    got = spatial.MODELS[name].gravity_torques([0.0] * 6)
+    assert got == pytest.approx(GRAVITY_AT_ZERO[name], abs=0.01), name
+
+
 if __name__ == "__main__":
     test_ov_round_trip()
     test_end_position_units("dm")
