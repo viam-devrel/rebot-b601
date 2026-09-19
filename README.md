@@ -145,7 +145,8 @@ The arm's model carries no tool geometry: a tool with no gripper component of it
 | `open_position_deg` | number | dm `-270`; rs **required** | Motor angle when fully open. There is no RS default: it depends on where the jaws sat when the motor was zeroed, so measure it (see below) |
 | `closed_position_deg` | number | `0` | Motor angle when fully closed |
 | `speed_deg_s` | number | dm `900`; rs `286.5` (5 rad/s, the vendor's limit) | Gripper motor speed, deg/s. `set_speed` clamps to 10–3000 |
-| `torque_ratio` | number | dm `0.07`; rs `0.3` | Max grip force, `(0, 1]`. dm: a fraction of rated torque, in `FORCE_POS`. rs: a fraction of the motor's factory current limit, written to `limit_cur` at configure. The two scale different quantities, hence the different defaults |
+| `torque_ratio` | number | `0.07` | Max grip force, `(0, 1]`, as a fraction of the motor's rated torque in `FORCE_POS`. dm only; accepted on rs but ignored, with a warning pointing at `grip_current_a` |
+| `grip_current_a` | number | `1.0` | rs only. Absolute grip current cap in amps, written to the motor's `limit_cur`. **1.0 A is a guess, not a derived figure**: conservative for a small rs-00 and deliberately erring toward a jaw too weak to close, which fails visibly rather than crushing. The configure log reports the motor's own limit (`limit_cur was X A`) so it can be tuned from evidence on the first run |
 | `holding_threshold_deg` | number | `15` | Stall distance from fully closed that counts as "holding something". dm only |
 | `stall_polls` | int | `4` | Consecutive no-motion polls (at 20 Hz) that count as settled: dm near-zero velocity, rs a position change under 0.5° |
 | `move_timeout_s` | number | `6` | Give up waiting for a grab/open after this long |
@@ -160,14 +161,25 @@ writes them at configure (and `limit_spd` again on `set_speed`):
 | Parameter | RID | Set from |
 |---|---|---|
 | `limit_spd` | `0x7017` | `speed_deg_s`, in rad/s |
-| `limit_cur` | `0x7018` | `torque_ratio` × the motor's factory `limit_cur`, read back before it is narrowed |
+| `limit_cur` | `0x7018` | `grip_current_a`, in amps, written as an absolute value |
 
 `limit_cur` caps the squeeze, so the jaws stall against a semi-stiff object instead of crushing it and
-driving on until the motor faults. Its RID is inferred from the standard RobStride parameter table
-(Seeed's stack confirms its neighbours `0x7017`, `0x701E`-`0x7020`, and this module already uses
-`0x7019`), so the module reads the value back after writing and logs both — a mismatch is logged as a
-warning saying grip force is **not** capped. Once a move ends short of its target the module
-re-commands the angle the jaws actually reached, so a stalled jaw holds rather than grinds.
+driving on until the motor faults. It is written as an absolute current and is never derived from what
+the motor already holds: `limit_cur` lives in motor RAM and survives a resource restart, so a cap
+computed from a read-back would be recomputed from the module's own previous cap and ratchet down on
+every restart until the jaw could not close at all. DM's `torque_ratio` is a fraction of rated torque
+in a mode RobStride does not have; it is a different knob, not the same one in other units, which is
+why RS has its own attribute.
+
+The module still reads `limit_cur` before writing and again afterwards, but only to report: the "was"
+value is informational and the read-back is a check. `0x7018` itself is inferred from the standard
+RobStride parameter table (Seeed's stack confirms its neighbours `0x7017` and `0x701E`-`0x7020`, and
+this module already uses `0x7019`), so if the read-back does not match what was written, that is logged
+as a warning saying grip force is **not** capped — the signal that the RID is wrong. A parameter the
+firmware does not have is logged the same way and does not stop the gripper building.
+
+Once a move ends short of its target the module re-commands the angle the jaws actually reached, so a
+stalled jaw holds rather than grinds.
 
 Two attributes are required. `port` is required because the `arm` dependency is a gRPC client
 under viam-server and cannot hand over the local bus. `open_position_deg` is required because nothing
@@ -180,7 +192,7 @@ tests/smoke_hardware.py --variant rs --port can0 --gripper
 which jogs motor `0x07` by a signed step you type, unclamped, until the jaws reach their own hard stop —
 that reading is `open_position_deg`. Consequences of the missing force signal: `set_force`, `get_force`
 and `grab_with_force` (and their `torque` aliases) are refused with an explanation (grip force is set by
-the `torque_ratio` attribute at configure and cannot be changed live), and `grab` always returns `False`,
+the `grip_current_a` attribute at configure and cannot be changed live), and `grab` always returns `False`,
 because deciding that the jaws are holding something needs a force signal RS does not provide. Moves
 still settle: RS status velocity is not a measurement (a resting motor reads -0.15 rad/s), so settling is
 judged by the position not changing rather than by velocity.

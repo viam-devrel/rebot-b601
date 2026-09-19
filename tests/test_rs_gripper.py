@@ -6,11 +6,10 @@ import pytest
 
 from src.rebot_b601 import spatial
 from src.rebot_b601.gripper import (
-    DEFAULT_TORQUE_RATIO,
+    DEFAULT_GRIP_CURRENT_A,
     GRIPPER_CAN_ID,
     RS_RID_LIMIT_CUR,
     RS_RID_LIMIT_SPD,
-    RS_TORQUE_RATIO,
     B601Gripper,
 )
 from tests.conftest import make_config
@@ -83,17 +82,40 @@ async def test_rs_writes_limit_spd_at_configure_and_on_set_speed(rs_gripper):
     assert motor.params[RS_RID_LIMIT_SPD] == pytest.approx(math.radians(100.0))
 
 
-def test_rs_caps_limit_cur_at_ratio_times_the_factory_value(factory):
-    g = B601Gripper.new(make_config("gripper", **RS, torque_ratio=0.5), {})
+def test_rs_writes_grip_current_a_to_limit_cur(factory):
+    B601Gripper.new(make_config("gripper", **RS, grip_current_a=0.6), {})
     motor = factory.latest.motors[GRIPPER_CAN_ID]
-    assert motor.params[RS_RID_LIMIT_CUR] == pytest.approx(0.5 * 4.0)  # fake factory limit is 4 A
-    assert g.torque_ratio == 0.5
+    assert motor.params[RS_RID_LIMIT_CUR] == pytest.approx(0.6)
 
 
-def test_rs_default_torque_ratio_is_its_own(rs_gripper):
-    g, motor = rs_gripper
-    assert g.torque_ratio == RS_TORQUE_RATIO != DEFAULT_TORQUE_RATIO
-    assert motor.params[RS_RID_LIMIT_CUR] == pytest.approx(RS_TORQUE_RATIO * 4.0)
+def test_rs_grip_current_defaults_without_the_attribute(rs_gripper):
+    _, motor = rs_gripper
+    assert motor.params[RS_RID_LIMIT_CUR] == pytest.approx(DEFAULT_GRIP_CURRENT_A)
+
+
+def test_rs_grip_current_does_not_ratchet_across_restarts(rs_gripper):
+    """limit_cur lives in motor RAM and survives a resource restart, so a cap derived from what
+    the motor already holds would shrink every time the module rebuilt until the jaw could not
+    close at all. Each new resource is a fresh object against the same motor: the absolute value
+    must land unchanged every time."""
+    _, motor = rs_gripper
+    for _ in range(3):
+        B601Gripper.new(make_config("gripper", **RS), {})
+        assert motor.params[RS_RID_LIMIT_CUR] == pytest.approx(DEFAULT_GRIP_CURRENT_A)
+
+
+def test_rs_rejects_a_non_positive_grip_current(factory):
+    with pytest.raises(ValueError, match="grip_current_a"):
+        B601Gripper.validate_config(make_config("gripper", **RS, grip_current_a=0.0))
+
+
+def test_torque_ratio_on_rs_warns_and_points_at_grip_current(factory, caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="src.rebot_b601.gripper"):
+        B601Gripper.new(make_config("gripper", **RS, torque_ratio=0.5), {})
+    warning = next(r.getMessage() for r in caplog.records if "torque_ratio" in r.getMessage())
+    assert "grip_current_a" in warning
 
 
 async def test_rs_moves_send_profile_position_not_force_pos(rs_gripper):

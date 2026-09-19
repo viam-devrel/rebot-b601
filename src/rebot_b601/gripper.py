@@ -7,9 +7,11 @@ open angle is negative -- about -270 deg on the B601-DM, and whatever
 
 The B601-DM runs in FORCE_POS mode, so grab force is capped by a torque ratio
 and the jaws stall gently on an object. RobStride has no force-limited position
-mode, so the B601-RS runs in profile position (POS_VEL) instead, where the same
-``torque_ratio`` attribute caps grip force through the motor's ``limit_cur``
-parameter and the speed comes from ``limit_spd``. Live force commands and
+mode, so the B601-RS runs in profile position (POS_VEL) instead, where the speed
+comes from the ``limit_spd`` parameter and grip force is capped by ``limit_cur``,
+an absolute current limit set by the ``grip_current_a`` attribute. That is a
+different knob from DM's ``torque_ratio``, not the same one in other units, so
+RS has its own attribute and ignores ``torque_ratio``. Force commands and
 holding detection are still not available there.
 
 Kinematic inputs (``get_current_inputs``/``go_to_inputs``) are the left
@@ -58,9 +60,11 @@ RS_SPEED_DEG_S = math.degrees(5.0)  # the vendor's vlim for the gripper; DM's is
 MIN_SPEED_DEG_S = 10.0
 MAX_SPEED_DEG_S = 3000.0
 DEFAULT_TORQUE_RATIO = 0.07  # DM: max grip force in [0, 1], a fraction of the motor's rated torque
-# RS caps grip force with a current limit instead, which scales a different quantity, so it
-# gets its own default rather than borrowing DM's.
-RS_TORQUE_RATIO = 0.3
+# RS: the absolute grip current cap in amps, written to limit_cur. 1.0 A is a guess, not a figure
+# derived from anything: it is conservative for a small rs-00 and errs toward a jaw too weak to
+# close, which fails visibly and safely rather than crushing. The "was X A" line logged at
+# configure reports the motor's own limit, so it can be tuned from evidence on the first run.
+DEFAULT_GRIP_CURRENT_A = 1.0
 # If the gripper stalls at least this far (deg of motor rotation) short of the
 # fully-closed position, we consider it to be holding something.
 DEFAULT_HOLDING_THRESHOLD_DEG = 15.0
@@ -107,12 +111,6 @@ class B601Gripper(Gripper, EasyResource):
         self._holding = False
         self._last_stall_deg: Optional[float] = None
         self._torque_enabled = False
-        # RS: the motor's own limit_cur before we narrowed it. Read once per process, because a
-        # re-read after we have written would resolve torque_ratio against our own cap.
-        # ponytail: a restart with the motor still powered reads back our cap as the "factory"
-        # value and ratchets it down; the logged factory amps make that visible on the bench.
-        # Add a max_current_a attribute if that bites.
-        self._rs_factory_cur: Optional[float] = None
 
     # ------------------------------------------------------------------ config
 
@@ -155,6 +153,8 @@ class B601Gripper(Gripper, EasyResource):
                     "it depends on where the jaws sat when the motor was zeroed, so measure it "
                     "with: tests/smoke_hardware.py --variant rs --port <chan> --gripper"
                 )
+            if float(attrs.get("grip_current_a", DEFAULT_GRIP_CURRENT_A)) <= 0.0:
+                raise ValueError("grip_current_a must be greater than 0 (amps)")
         ratio = float(attrs.get("torque_ratio", DEFAULT_TORQUE_RATIO))
         if not 0.0 < ratio <= 1.0:
             raise ValueError("torque_ratio must be in (0, 1]")
@@ -193,7 +193,14 @@ class B601Gripper(Gripper, EasyResource):
         self.open_deg = float(attrs.get("open_position_deg", DEFAULT_OPEN_DEG))
         self.closed_deg = float(attrs.get("closed_position_deg", DEFAULT_CLOSED_DEG))
         self.speed_deg_s = float(attrs.get("speed_deg_s", RS_SPEED_DEG_S if rs else DEFAULT_SPEED_DEG_S))
-        self.torque_ratio = float(attrs.get("torque_ratio", RS_TORQUE_RATIO if rs else DEFAULT_TORQUE_RATIO))
+        self.torque_ratio = float(attrs.get("torque_ratio", DEFAULT_TORQUE_RATIO))
+        self.grip_current_a = float(attrs.get("grip_current_a", DEFAULT_GRIP_CURRENT_A))
+        if rs and "torque_ratio" in attrs:
+            LOGGER.warning(
+                "torque_ratio is ignored on the B601-RS: it is a fraction of a Damiao motor's "
+                "rated torque in FORCE_POS, and RobStride has no equivalent. Cap RS grip force "
+                "with 'grip_current_a' instead, an absolute current limit in amps"
+            )
         self.holding_threshold_deg = float(attrs.get("holding_threshold_deg", DEFAULT_HOLDING_THRESHOLD_DEG))
         self.stall_polls = int(attrs.get("stall_polls", DEFAULT_STALL_POLLS))
         self.move_timeout_s = float(attrs.get("move_timeout_s", DEFAULT_MOVE_TIMEOUT_S))
@@ -237,33 +244,23 @@ class B601Gripper(Gripper, EasyResource):
             except Exception:
                 LOGGER.warning("failed to restore gripper motor after reconnect", exc_info=True)
 
+    def _read_limit_cur(self, motor) -> float:
+        """Diagnostic only. Nothing is computed from this, so a failed read is not fatal: it
+        returns nan, which the read-back check below treats as a mismatch."""
+        try:
+            return float(motor.robstride_get_param_f32(RS_RID_LIMIT_CUR))
+        except Exception:
+            return float("nan")
+
     def _write_rs_limits(self, motor):
         """RobStride takes its speed cap from the limit_spd parameter and its squeeze ceiling
-        from limit_cur; neither is carried by the send_pos_vel frame."""
+        from limit_cur; neither is carried by the send_pos_vel frame. limit_cur is written as
+        an absolute current, never derived from what the motor already holds: deriving it would
+        mean re-reading a value we wrote ourselves, and every restart would ratchet the cap down."""
         motor.robstride_write_param_f32(RS_RID_LIMIT_SPD, math.radians(self.speed_deg_s))
+        was = self._read_limit_cur(motor)
         try:
-            if self._rs_factory_cur is None:
-                self._rs_factory_cur = float(motor.robstride_get_param_f32(RS_RID_LIMIT_CUR))
-                LOGGER.info("gripper factory limit_cur is %.3f A", self._rs_factory_cur)
-            amps = self.torque_ratio * self._rs_factory_cur
-            motor.robstride_write_param_f32(RS_RID_LIMIT_CUR, amps)
-            got = float(motor.robstride_get_param_f32(RS_RID_LIMIT_CUR))
-            LOGGER.info(
-                "gripper limit_cur (RID 0x%04X): wrote %.3f A (torque_ratio %.2f x factory %.3f A), read back %.3f A",
-                RS_RID_LIMIT_CUR,
-                amps,
-                self.torque_ratio,
-                self._rs_factory_cur,
-                got,
-            )
-            if abs(got - amps) > max(0.05, 0.02 * abs(amps)):
-                LOGGER.warning(
-                    "gripper limit_cur read back %.3f A, not the %.3f A written: RID 0x%04X may not "
-                    "be limit_cur on this firmware, so grip force is NOT capped",
-                    got,
-                    amps,
-                    RS_RID_LIMIT_CUR,
-                )
+            motor.robstride_write_param_f32(RS_RID_LIMIT_CUR, self.grip_current_a)
         except Exception:
             # The RID is inferred, so a firmware that does not have it must not stop the
             # gripper building; it just runs uncapped, which is what 0.6.0 already did.
@@ -271,6 +268,24 @@ class B601Gripper(Gripper, EasyResource):
                 "gripper limit_cur (RID 0x%04X) could not be set; grip force is NOT capped",
                 RS_RID_LIMIT_CUR,
                 exc_info=True,
+            )
+            return
+        got = self._read_limit_cur(motor)
+        LOGGER.info(
+            "gripper limit_cur (RID 0x%04X) was %.3f A (informational only), set to %.3f A from "
+            "grip_current_a, read back %.3f A",
+            RS_RID_LIMIT_CUR,
+            was,
+            self.grip_current_a,
+            got,
+        )
+        if not abs(got - self.grip_current_a) <= max(0.05, 0.02 * self.grip_current_a):
+            LOGGER.warning(
+                "gripper limit_cur read back %.3f A, not the %.3f A written: RID 0x%04X may not "
+                "be limit_cur on this firmware, so grip force is NOT capped",
+                got,
+                self.grip_current_a,
+                RS_RID_LIMIT_CUR,
             )
 
     def _configure_motor(self):
@@ -473,8 +488,8 @@ class B601Gripper(Gripper, EasyResource):
             if self.variant == "rs" and name in _RS_UNSUPPORTED:
                 raise ValueError(
                     f"'{name}' is not supported on the B601-RS yet: RobStride has no force-limited "
-                    "position mode. Grip force is capped by the 'torque_ratio' attribute instead, "
-                    "which sets the motor's current limit at configure and cannot be changed live"
+                    "position mode. Cap grip force with the 'grip_current_a' attribute instead, an "
+                    "absolute current limit applied at configure that cannot be changed live"
                 )
             if name == "set_zero_position":
                 await asyncio.to_thread(self._bus_call, self.bus.motor(GRIPPER_CAN_ID).set_zero_position)

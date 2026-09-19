@@ -23,10 +23,13 @@
 - Settling is judged by variant: DM by near-zero velocity, RS by the position not changing (RS status
   velocity is not a measurement; a resting motor reads -0.15 rad/s). `stall_polls` counts either.
 - The RS gripper's default `speed_deg_s` is 286.5 (5 rad/s, the vendor's limit) instead of DM's 900.
-- `torque_ratio` now caps grip force on RS too, through the motor's `limit_cur` parameter
-  (RID `0x7018`) rather than DM's `FORCE_POS` torque ratio: the module reads the motor's factory
-  `limit_cur` at configure and writes `torque_ratio x factory`. The two ratios scale different
-  quantities, so the RS default is 0.3 against DM's 0.07. The "ignored on RS" warning is gone.
+- New RS attribute `grip_current_a`, default 1.0: an absolute grip current cap in amps, written to the
+  motor's `limit_cur` parameter (RID `0x7018`) at configure. 1.0 A is a guess, not a derived figure --
+  conservative for a small rs-00, erring toward a jaw too weak to close, which fails visibly rather than
+  crushing. The configure log reports the motor's own limit so it can be tuned from evidence.
+  `torque_ratio` stays DM-only and is still ignored on RS with a warning, which now names
+  `grip_current_a`: a fraction of a Damiao motor's rated torque in `FORCE_POS` and an absolute ampere
+  value are different knobs, not the same knob in different units.
 - The arm's served kinematic model ends at the tool mount, `link6`, where a tool bolts on. It used to
   run one fixed joint further, to the mount plate (`end_link`), which sits 155 mm (DM) / 166 mm (RS)
   past `link6`, beyond any hardware. The mount plate stays in the bundled URDF for its mass and its
@@ -60,15 +63,21 @@
   stack shows. The module writes it at configure and again on `set_speed`, and still passes the value in
   the frame for any firmware that does honour it.
 - The RS jaw no longer crushes semi-stiff objects, nor grinds itself into a HALL encoder fault. Two
-  causes: nothing capped the motor current (now `limit_cur`, above), and `_move_until_settled` returned
+  causes: nothing capped the motor current (now `grip_current_a` -> `limit_cur`, above), and
+  `_move_until_settled` returned
   after detecting a stall while leaving the motor driving at a target it could not reach. A move that
   ends short of its target now re-commands the angle the jaws actually reached. DM is unchanged there:
   `FORCE_POS` caps the current by design and that standing push is how a DM grab keeps its grip.
+- `limit_cur` is written as an absolute current and never derived from the motor's current value. It
+  lives in motor RAM and survives a resource restart, so a cap computed from a read-back would be
+  recomputed from the module's own previous cap and ratchet down on every restart -- with a 0.3 ratio,
+  to 9% and then 2.7% of the real limit, which would present as a jaw that stopped closing for no
+  visible reason. The parameter is still read before the write and after it, but only to report.
 - `limit_cur`'s RID is inferred, not proven. Seeed's stack confirms only its neighbours in the standard
   RobStride parameter table (`0x7017` limit_spd, `0x701E`-`0x7020` the gains) and this module already
   uses `0x7019` mechPos; motorbridge's native library lists `limit_cur` in the same position. So the
-  module reads the value back after writing and logs what it wrote and what came back, warns if they
-  disagree, and carries on uncapped rather than failing to build if the parameter does not exist.
+  module reads the value back after writing and logs both, warns if they disagree, and carries on
+  uncapped rather than failing to build if the parameter does not exist.
 - A latched gripper fault is easier to get out of: the `{"clear_errors": true}` hint now names the
   gripper component, `{"status": true}` carries the same hint when a fault is present, and the README's
   RS gripper section spells the command out. The recovery path itself is unchanged and still manual.
@@ -90,7 +99,7 @@
 
 ### Not yet on RS
 - Live force control: `set_force`/`get_force`, `grab_with_force` and their `torque` aliases are refused
-  with an explanation. Grip force is capped by the `torque_ratio` attribute at configure, through
+  with an explanation. Grip force is capped by the `grip_current_a` attribute at configure, through
   `limit_cur`, and cannot be changed per call.
 - Holding detection: `grab` returns `False` and `is_holding_something` reports false. Deciding that the
   jaws hold something needs a force signal RS does not provide, and a threshold tuned on hardware.
