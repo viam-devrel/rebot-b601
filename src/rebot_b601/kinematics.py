@@ -28,12 +28,6 @@ from . import spatial
 
 COLLISION_MODES = ("primitives", "meshes", "none")
 
-# Not read anywhere: travel comes from `model.gripper.travel_m`. Kept as the record of a known
-# discrepancy -- 0.05 is this module's own DM figure, while Seeed's DM vendor URDF gives 0.0285 per
-# finger. DM is deliberately left unchanged pending a caliper measurement, so its served payload
-# stays byte-identical.
-FINGER_TRAVEL_M = 0.05
-
 _STL_CONTENT_TYPE = "stl"
 _GLB_CONTENT_TYPE = "model/gltf-binary"
 

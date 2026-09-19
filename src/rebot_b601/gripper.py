@@ -68,6 +68,20 @@ _SETTLE_SEC = 0.02
 _MOVING_VEL_RAD_S = 0.05
 _POLL_SEC = 0.05
 _ARRIVE_TOL_DEG = 2.0
+# Every DoCommand that sets or uses a grip-force ratio. RobStride has no force-limited
+# position mode, so none of them mean anything there.
+_RS_UNSUPPORTED = frozenset(
+    {
+        "set_force",
+        "set_torque",
+        "set_gripper_torque",
+        "get_force",
+        "get_torque",
+        "get_gripper_torque",
+        "grab_with_force",
+        "grab_with_torque",
+    }
+)
 _RS_SETTLE_DELTA_DEG = 0.5  # a moving motor covers ~14 deg per poll at the 5 rad/s vlim, so this is a wide margin
 
 
@@ -240,9 +254,7 @@ class B601Gripper(Gripper, EasyResource):
         self._torque_enabled = True
 
     def _state(self):
-        states = self._bus_call(
-            self.bus.poll_feedback, [GRIPPER_CAN_ID], positions_only=not self._torque_enabled
-        )
+        states = self._bus_call(self.bus.poll_feedback, [GRIPPER_CAN_ID], positions_only=not self._torque_enabled)
         state = states[GRIPPER_CAN_ID]
         if state is None:
             raise BusError("no feedback from gripper motor 0x07; check power and wiring")
@@ -388,6 +400,11 @@ class B601Gripper(Gripper, EasyResource):
     async def do_command(self, command: Mapping[str, Any], *, timeout=None, **kwargs) -> Mapping[str, Any]:
         result: Dict[str, Any] = {}
         for name, arg in command.items():
+            if self.variant == "rs" and name in _RS_UNSUPPORTED:
+                raise ValueError(
+                    f"'{name}' is not supported on the B601-RS yet: RobStride has no "
+                    "force-limited position mode, so there is no torque ratio to set"
+                )
             if name == "set_zero_position":
                 await asyncio.to_thread(self._bus_call, self.bus.motor(GRIPPER_CAN_ID).set_zero_position)
                 result[name] = "ok; current (closed) position is now zero"
@@ -438,29 +455,14 @@ class B601Gripper(Gripper, EasyResource):
             elif name in ("get_speed", "get_gripper_speed"):
                 result[name] = self.speed_deg_s
             elif name in ("set_force", "set_torque", "set_gripper_torque"):
-                if self.variant == "rs":
-                    raise ValueError(
-                        f"'{name}' is not supported on the B601-RS yet: RobStride has no "
-                        "force-limited position mode, so there is no torque ratio to set"
-                    )
                 ratio = float(arg)
                 if not 0.0 < ratio <= 1.0:
                     raise ValueError("force/torque ratio must be in (0, 1]")
                 self.torque_ratio = ratio
                 result[name] = self.torque_ratio
             elif name in ("get_force", "get_torque", "get_gripper_torque"):
-                if self.variant == "rs":
-                    raise ValueError(
-                        f"'{name}' is not supported on the B601-RS yet: RobStride has no "
-                        "force-limited position mode, so there is no torque ratio to set"
-                    )
                 result[name] = self.torque_ratio
             elif name in ("grab_with_force", "grab_with_torque"):
-                if self.variant == "rs":
-                    raise ValueError(
-                        f"'{name}' is not supported on the B601-RS yet: RobStride has no "
-                        "force-limited position mode, so there is no torque ratio to set"
-                    )
                 params = arg if isinstance(arg, Mapping) else {}
                 if "fraction" in params:
                     target = self.deg_from_fraction(float(params["fraction"]))
