@@ -9,6 +9,8 @@
   `move_to_position` describe the RS arm.
 - `tools/build_assets.py --variant {dm,rs}`; `make assets` builds RS, `make assets-dm` rebuilds DM deliberately.
 - `{"gravity_torques": true}` on RS returns the RS model's torques with an "unverified" note instead of refusing.
+- `tests/smoke_hardware.py --gravity-check` prints measured holding torque next to the model's gravity torque
+  per joint, the bench check that gates RS gravity compensation.
 
 ### Changed
 - `spatial` exposes `MODELS["dm"|"rs"]`; the old module-level names alias the DM model. DM's served kinematics

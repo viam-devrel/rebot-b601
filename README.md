@@ -73,31 +73,32 @@ pointing there) and set `"port": "can0"` or `"PCAN_USBBUS1"`. macOS strips `DYLD
 a SIP-protected binary, so the venv must come from `uv` (which `run.sh` prefers) or another non-system
 Python; one built from `/usr/bin/python3` drops the export and motorbridge reports `load PCBUSB failed`.
 
+Joint positions still work when the motors send no status frames (they are read as parameters), including
+with torque off, when stopped RobStride motors stop streaming and would otherwise report a frozen frame; the health
+report then shows `position_only: true` and the arm moves without fault, temperature or torque checks (see
+Safety and Troubleshooting).
+
 The module serves the RS arm's own kinematic model: a bundled RS URDF, RS collision boxes and decimated
 meshes, and per-link GLB visuals. `get_end_position`, `get_kinematics`, `get_geometries`, `Get3DModels`
 and motion-service `move_to_position` all describe the RS arm. The RS URDF comes from Seeed's
 [`reBotArm_control_py`](https://github.com/Seeed-Projects/reBotArm_control_py) repository,
 `urdf/RS/urdf/ReBot_Arm_RS.urdf` at commit `76512eab38ba54f11830e7cdfcba68e11629f902`, with Seeed's
-`gripper_end`/`j_gripper_end` renamed `end_link`/`end_joint` so the mount frame is named as on DM. The RS
-mount frame sits at the gripper base, 166 mm from link6 (DM's is at the finger plane, 155 mm); at zero the
-RS end mount is at x 301.7, z 217.7 mm. The RS arm rests in the same folded posture as DM, with positive
-joint 2/3 angles where DM uses negative.
+`gripper_end`/`j_gripper_end` renamed `end_link`/`end_joint` so the mount frame is named as on DM. Both
+mount frames sit ahead of the hardware: DM's at the finger plane, 155 mm from link6; RS's 166 mm from
+link6, about 73 mm past the front of the RS gripper body. At zero the RS end mount is at x 301.7,
+z 217.7 mm. The RS arm rests in the same folded posture as DM, with positive joint 2/3 angles where DM
+uses negative.
 
 Not on RS yet: the gripper component (RS ships `gripper_end` as a mount, not a 1-DoF gripper) refuses to
 attach to an RS arm, and discovery finds DM boards only. Manual mode is damping only until gravity
-compensation is checked on the bench: the RS mass model exists and its torques mirror DM's with opposite
-sign on joints 2 and 3, but `gravity_scale` is forced to 0 and `{"gravity_torques": true}` reports the
-model's numbers with an "unverified" note rather than applying them.
+compensation is checked on the bench: the RS mass model exists but is unverified, so `gravity_scale` is
+forced to 0 and `{"gravity_torques": true}` reports the model's numbers with an "unverified" note rather
+than applying them.
 
 Licence: the upstream `reBotArm_control_py` repository ships no LICENSE file and no SPDX headers at the
 pinned commit. `src/rebot_b601/assets/rs/ATTRIBUTION.md` redistributes the RS assets under
 CERN-OHL-W-2.0 (hardware) / Apache-2.0 (code), assumed by analogy with the sibling `reBot-DevArm` package
 that is licensed that way and is the DM source. Confirm this with Seeed before a registry release.
-
-Joint positions still work when the motors send no status frames (they are read as parameters), including
-with torque off, when stopped RobStride motors stop streaming and would otherwise report a frozen frame; the health
-report then shows `position_only: true` and the arm moves without fault, temperature or torque checks (see
-Safety and Troubleshooting).
 
 ### Arm attributes
 
@@ -243,8 +244,9 @@ collision boxes, meshes and GLBs; the arm picks the model from `variant`.
   meshes from `reBotArm_control_py` (`src/rebot_b601/assets/rs/ATTRIBUTION.md`; see the licence note under
   B601-RS). Rebuild with `python tools/build_assets.py --variant {dm,rs}`.
 - Every collision STL is decimated to a 150 KB cap. The RS source meshes are dense (164k triangles on
-  link3, reduced to about 3k), which leaves roughly 2 mm feature resolution. `base_link`, `link1` and
-  `link6` on RS are decimated from one large STL each and their GLB visuals look coarse.
+  link3, reduced to about 3k), which leaves roughly 2 mm feature resolution. On RS, `base_link`, `link1`
+  and `link6` have no separate visual parts upstream, so their GLBs come from the shared collision mesh
+  and look coarse.
 
 ## Calibration
 
@@ -319,6 +321,7 @@ make assets-dm       # rebuild DM's, deliberately: decimation output drifts with
 .venv/bin/python tests/smoke_hardware.py                                  # DM, read-only
 DYLD_LIBRARY_PATH=/usr/local/lib .venv/bin/python tests/smoke_hardware.py --variant rs --port can0          # RS, read-only (macOS prefix)
 DYLD_LIBRARY_PATH=/usr/local/lib .venv/bin/python tests/smoke_hardware.py --variant rs --port can0 --move   # MOVES joint 6 after an explicit Enter
+DYLD_LIBRARY_PATH=/usr/local/lib .venv/bin/python tests/smoke_hardware.py --variant rs --port can0 --gravity-check   # torque on, holds; measured vs model torque per joint (stop viam-server first)
 ```
 
 The smoke script prints FK for the variant it ran against (`end mount (FK, <variant>)`). The RS read-only
@@ -327,7 +330,7 @@ Enter) before reading the joints again. `--move` enables torque and moves the ar
 own fault message (undervoltage, for example) if any motor reports a fault. Flag abbreviations are disabled,
 so `--m` is an error, not a move.
 
-Creating a GitHub release (tag `0.4.0` or `v0.4.0`) publishes to the registry through
+Creating a GitHub release (tag `0.5.0` or `v0.5.0`) publishes to the registry through
 `.github/workflows/deploy.yml`; the workflow can also be run by hand with a version input.
 
 ## Comparison with the uFactory xArm module
