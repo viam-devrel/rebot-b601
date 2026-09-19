@@ -362,7 +362,7 @@ async def test_rs_arm_serves_the_rs_model(factory):
     assert float(root.find("joint[@name='joint2']/limit").get("lower")) == pytest.approx(math.radians(-5.0))
     p_rs = await rs.get_end_position()
     p_dm = await dm.get_end_position()
-    assert math.isclose(p_rs.x, 301.7, abs_tol=0.5) and math.isclose(p_rs.z, 217.7, abs_tol=0.5)
+    assert math.isclose(p_rs.x, 135.5, abs_tol=0.5) and math.isclose(p_rs.z, 217.7, abs_tol=0.5)
     assert not math.isclose(p_rs.x, p_dm.x, abs_tol=5.0)
 
 

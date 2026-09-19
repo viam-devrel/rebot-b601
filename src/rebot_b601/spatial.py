@@ -324,6 +324,10 @@ class Model:
         self.end_link = self.link_order[-1]
         # every link but the mount; the mount's geometry belongs to the gripper component
         self.arm_links = self.link_order[:-1]
+        # Where a tool bolts on, and the frame the arm serves as its end effector. The URDF
+        # runs one fixed joint further, to the mount plate (end_link), which stays in the
+        # model for its mass and its collision asset but is not served.
+        self.tool_mount_link = self.arm_links[-1]
 
     @functools.cached_property
     def primitives(self) -> dict:
@@ -361,11 +365,11 @@ class Model:
         return out
 
     def end_position(self, joint_degs):
-        """FK for Viam: joint angles in degrees -> (x_mm, y_mm, z_mm, ox, oy, oz, theta_deg)."""
+        """FK for Viam: joint angles in degrees -> (x_mm, y_mm, z_mm, ox, oy, oz, theta_deg)
+        of the tool mount, which is the frame the served kinematics end at."""
         rads = [math.radians(d) for d in joint_degs]
-        (x, y, z), rot = self.forward_kinematics(rads)
-        ox, oy, oz, theta = quat_to_orientation_vector(rotation_to_quat(rot))
-        return (x * 1000.0, y * 1000.0, z * 1000.0, ox, oy, oz, math.degrees(theta))
+        t = self.link_transforms(rads)[self.link_order.index(self.tool_mount_link)]
+        return transform_to_viam_pose(t)
 
     def gravity_torques(self, joint_rads, gravity=(0.0, 0.0, -GRAVITY_M_S2), extra_payload_kg=0.0):
         """Joint torques (Nm) that gravity exerts on each revolute joint, i.e. the

@@ -107,12 +107,13 @@ def test_end_position_units(name):
 
 def test_rs_zero_pose_is_the_folded_rest_posture():
     x, y, z, *_ = spatial.MODELS["rs"].end_position([0] * 6)
-    assert math.isclose(x, 301.7, abs_tol=0.1)
+    assert math.isclose(x, 135.5, abs_tol=0.1)
     assert math.isclose(y, 0.0, abs_tol=0.1)
     assert math.isclose(z, 217.7, abs_tol=0.1)
-    # positive j2/j3 on RS move the arm the way negative ones do on DM
+    # positive j2/j3 on RS move the arm the way negative ones do on DM; the height is the
+    # tool mount's, 166 mm short of the mount plate the old threshold was measured at
     _, _, z_up, *_ = spatial.MODELS["rs"].end_position([0, 30, 50, 0, 0, 0])
-    assert z_up > 500
+    assert z_up > 400
 
 
 def test_rs_gravity_torques_mirror_dm():
@@ -185,6 +186,29 @@ GRAVITY_AT_ZERO = {
 def test_gravity_at_zero_survives_the_frame_split(name):
     got = spatial.MODELS[name].gravity_torques([0.0] * 6)
     assert got == pytest.approx(GRAVITY_AT_ZERO[name], abs=0.01), name
+
+
+@pytest.mark.parametrize("name", ["dm", "rs"])
+def test_end_position_reports_the_tool_mount(name):
+    m = spatial.MODELS[name]
+    assert m.tool_mount_link == "link6"
+    x, y, z, *_ = m.end_position([0] * 6)
+    expected = {"dm": (104.9, 191.7), "rs": (135.5, 217.7)}[name]
+    assert (x, z) == pytest.approx(expected, abs=0.1)
+    assert y == pytest.approx(0.0, abs=0.1)
+
+
+@pytest.mark.parametrize("name", ["dm", "rs"])
+def test_the_tool_mount_is_on_the_approach_axis(name):
+    """Pose-independent invariant, and the premise the whole split rests on: end_joint is a
+    pure +Z translation in the tool mount's frame, so that axis points at the tool at every
+    pose. A vendor URDF re-pin that moved the mount off +Z would invalidate the design, and
+    this is the two-line guard that would catch it."""
+    end_joint = spatial.MODELS[name].chain[-1]
+    assert end_joint.type == "fixed"
+    assert end_joint.origin[0][3] == pytest.approx(0.0, abs=1e-9)
+    assert end_joint.origin[1][3] == pytest.approx(0.0, abs=1e-9)
+    assert end_joint.origin[2][3] > 0.1
 
 
 if __name__ == "__main__":
