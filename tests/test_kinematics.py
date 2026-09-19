@@ -180,9 +180,7 @@ def test_the_jaw_did_not_move_in_space(model):
     composition order is reversed; the first half pins the published transform to the URDF."""
     ts = model.link_transforms([0.0] * 6)
     mount_t, plate = ts[model.link_order.index(model.tool_mount_link)], ts[-1]
-    o = ET.fromstring(kinematics.gripper_kinematics(model, "none")[1]).find(
-        "joint[@name='tool_mount_joint']/origin"
-    )
+    o = ET.fromstring(kinematics.gripper_kinematics(model, "none")[1]).find("joint[@name='tool_mount_joint']/origin")
     served = spatial._transform(
         spatial._rot_rpy(*[float(v) for v in o.get("rpy").split()]),
         [float(v) for v in o.get("xyz").split()],

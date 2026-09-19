@@ -341,14 +341,6 @@ class Model:
         links = data.get("links", data)
         return {k: v for k, v in links.items() if isinstance(v, dict) and "center" in v and "size" in v}
 
-    def forward_kinematics(self, joint_rads):
-        """Compute the end-effector transform for the given revolute joint angles.
-
-        Returns ((x, y, z) in meters, 3x3 rotation matrix) of end_link in base_link.
-        """
-        t = self.link_transforms(joint_rads)[-1]
-        return (t[0][3], t[1][3], t[2][3]), [row[:3] for row in t[:3]]
-
     def link_transforms(self, joint_rads):
         """4x4 transforms of every link frame (in chain order) in the base frame.
 

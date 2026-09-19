@@ -91,7 +91,10 @@ def test_fk_against_pytransform3d(name):
         for jn, angle in zip(joint_names, q):
             tm.set_joint(jn, angle)
         expected = tm.get_transform(model.end_link, "base_link")
-        (x, y, z), rot = model.forward_kinematics(q)
+        # The mount plate, deliberately: this is the one check that validates the whole
+        # bundled chain including the fixed end_joint, which the served chain omits.
+        m = model.link_transforms(q)[-1]
+        (x, y, z), rot = (m[0][3], m[1][3], m[2][3]), [row[:3] for row in m[:3]]
         assert np.allclose(expected[:3, 3], [x, y, z], atol=1e-9), (
             f"{name} FK position mismatch at {q}: {expected[:3, 3]} vs {(x, y, z)}"
         )

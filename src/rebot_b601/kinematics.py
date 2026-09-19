@@ -206,8 +206,10 @@ def gripper_urdf(model: spatial.Model, mode: str = "primitives") -> Tuple[bytes,
     add_link("finger_left_link", g.left_key)
     # The right finger mirrors the left; model it as a static envelope over its travel.
     add_link(
-        "finger_right_link", g.right_key,
-        widen=g.travel_m, shift=g.right_travel_sign * g.travel_m / 2,
+        "finger_right_link",
+        g.right_key,
+        widen=g.travel_m,
+        shift=g.right_travel_sign * g.travel_m / 2,
     )
 
     (lxyz, lrpy), (rxyz, rrpy) = g.left_origin, g.right_origin
@@ -248,9 +250,7 @@ def gripper_geometries(model: spatial.Model, finger_travel_m: float) -> List[Geo
     def finger_frame(origin, travel):
         (xyz, rpy) = origin
         base = spatial._transform(spatial._rot_rpy(*rpy), list(xyz))
-        slide = spatial._transform(
-            [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [a * travel for a in g.axis]
-        )
+        slide = spatial._transform([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [a * travel for a in g.axis])
         return spatial._mat_mul(mount, spatial._mat_mul(base, slide))
 
     out = []
