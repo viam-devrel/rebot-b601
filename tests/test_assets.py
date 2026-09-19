@@ -135,9 +135,9 @@ def test_rs_glb_parts_carry_material_colours():
 #
 # These CAD parts are assemblies of many separate closed shells. Decimated as one mesh
 # with a proportional face budget the small shells collapsed into loose triangles: the
-# shipped link2.stl was 3062 faces in 2762 pieces whose largest was 6 triangles -- dust
-# the 3D view draws as floating shards and a motion planner routes straight through.
-# RS only: DM's assets are byte-pinned by test_dm_baseline.py and still predate the fix.
+# shipped rs link2.stl was 3062 faces in 2762 pieces whose largest was 6 triangles, and
+# dm base_link.stl 3062 faces in 2409 pieces whose largest was 7 -- dust the 3D view
+# draws as floating shards and a motion planner routes straight through.
 
 
 def _shells(mesh):
@@ -149,15 +149,15 @@ def _assert_solid(shells, what):
     assert len(shells) * 10 <= sum(shells), f"{what}: {sum(shells)} faces in {len(shells)} shells is rubble"
 
 
-@pytest.mark.parametrize("link", VARIANTS["rs"]["stl"])
-def test_rs_collision_mesh_is_not_shards(link):
-    m = trimesh.load(str(VARIANTS["rs"]["dir"] / "meshes" / f"{link}.stl"), force="mesh")
+@pytest.mark.parametrize("variant,link", _pairs("stl"))
+def test_collision_mesh_is_not_shards(variant, link):
+    m = trimesh.load(str(variant["dir"] / "meshes" / f"{link}.stl"), force="mesh")
     _assert_solid(_shells(m), f"{link}.stl")
 
 
-@pytest.mark.parametrize("link", VARIANTS["rs"]["glb"])
-def test_rs_visual_mesh_is_not_shards(link):
-    scene = trimesh.load(str(VARIANTS["rs"]["dir"] / "models" / f"{link}.glb"), force="scene")
+@pytest.mark.parametrize("variant,link", _pairs("glb"))
+def test_visual_mesh_is_not_shards(variant, link):
+    scene = trimesh.load(str(variant["dir"] / "models" / f"{link}.glb"), force="scene")
     for name, geom in scene.geometry.items():
         _assert_solid(_shells(geom), f"{link}.glb/{name}")
 

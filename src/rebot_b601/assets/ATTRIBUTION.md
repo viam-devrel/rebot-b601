@@ -1,12 +1,11 @@
 # Asset attribution
 
-The meshes in this directory are derived from the Seeed Studio reBot-DevArm
-B601-DM description package.
+The meshes in this directory are derived from the Seeed Studio reBot-DevArm B601-DM description package.
 
 - Source repository: https://github.com/Seeed-Projects/reBot-DevArm
 - Pinned commit: `b0acdcfc47843de16a9f018c6ab1de1d31649fdc`
 - Package path: `Rebot_Arm_description/DM/` (URDF `urdf/ReBot_Arm_DM.urdf`, meshes under `meshes/`)
-- Rebuilt with `tools/build_assets.py` (trimesh 5.1.0)
+- Rebuilt with `tools/build_assets.py --variant dm` (trimesh 5.1.0)
 
 ## Licence
 
@@ -20,8 +19,9 @@ Reciprocal, and its software under the Apache License 2.0:
 The meshes are redistributed unmodified apart from decimation (triangle count
 reduction) and format conversion (binary STL; visual parts merged per link
 into GLB with flat colours). Geometry, units (metres) and link frames are
-unchanged from the source. A copy of the upstream LICENSE text accompanies the
-source package; this notice is the required attribution.
+unchanged from the source. A copy of the upstream LICENSE text, where the
+source package ships one, accompanies it; this notice is the required
+attribution.
 
 ## Units and frames
 
@@ -33,27 +33,27 @@ source package; this notice is the required attribution.
 
 | File | Size | Notes |
 |---|---:|---|
-| `meshes/base_link.stl` | 149.6 KB | decimated from meshes/collision/base_link.STL |
-| `meshes/link1.stl` | 149.6 KB | decimated from meshes/collision/link1.STL |
-| `meshes/link2.stl` | 149.6 KB | decimated from meshes/collision/link2.STL |
-| `meshes/link3.stl` | 149.6 KB | decimated from meshes/collision/link3.STL |
-| `meshes/link4.stl` | 149.6 KB | decimated from meshes/collision/link4.STL |
-| `meshes/link5.stl` | 149.6 KB | decimated from meshes/collision/link5.STL |
-| `meshes/link6.stl` | 149.6 KB | decimated from meshes/collision/link6.STL |
-| `meshes/gripper_base.stl` | 149.6 KB | decimated from meshes/collision/gripper_base.stl |
-| `meshes/left_finger.stl` | 149.6 KB | decimated from meshes/collision/left_finger.stl |
-| `meshes/right_finger.stl` | 149.6 KB | decimated from meshes/collision/right_finger.stl |
-| `models/base_link.glb` | 195.3 KB | merged 3 visual part(s) |
-| `models/link1.glb` | 120.7 KB | merged 3 visual part(s) |
-| `models/link2.glb` | 196.3 KB | merged 4 visual part(s) |
-| `models/link3.glb` | 196.5 KB | merged 4 visual part(s) |
-| `models/link4.glb` | 195.6 KB | merged 4 visual part(s) |
-| `models/link5.glb` | 195.0 KB | merged 3 visual part(s) |
-| `models/link6.glb` | 194.2 KB | merged 2 visual part(s) |
-| `models/end_link.glb` | 194.7 KB | merged 3 visual part(s) |
+| `meshes/base_link.stl` | 144.1 KB | decimated from meshes/collision/base_link.STL |
+| `meshes/link1.stl` | 149.4 KB | decimated from meshes/collision/link1.STL |
+| `meshes/link2.stl` | 144.5 KB | decimated from meshes/collision/link2.STL |
+| `meshes/link3.stl` | 143.7 KB | decimated from meshes/collision/link3.STL |
+| `meshes/link4.stl` | 141.0 KB | decimated from meshes/collision/link4.STL |
+| `meshes/link5.stl` | 145.3 KB | decimated from meshes/collision/link5.STL |
+| `meshes/link6.stl` | 143.9 KB | decimated from meshes/collision/link6.STL |
+| `meshes/gripper_base.stl` | 147.3 KB | decimated from meshes/collision/gripper_base.stl |
+| `meshes/left_finger.stl` | 148.6 KB | decimated from meshes/collision/left_finger.stl |
+| `meshes/right_finger.stl` | 148.7 KB | decimated from meshes/collision/right_finger.stl |
+| `models/base_link.glb` | 298.5 KB | merged 3 visual part(s) |
+| `models/link1.glb` | 120.4 KB | merged 3 visual part(s) |
+| `models/link2.glb` | 293.9 KB | merged 4 visual part(s) |
+| `models/link3.glb` | 291.4 KB | merged 4 visual part(s) |
+| `models/link4.glb` | 290.7 KB | merged 4 visual part(s) |
+| `models/link5.glb` | 290.9 KB | merged 3 visual part(s) |
+| `models/link6.glb` | 291.2 KB | merged 2 visual part(s) |
+| `models/end_link.glb` | 210.0 KB | merged 3 visual part(s) |
 | `models/finger_left_link.glb` | 87.9 KB | merged 4 visual part(s) |
 | `models/finger_right_link.glb` | 88.0 KB | merged 4 visual part(s) |
-| `primitives.json` | 13.5 KB | generated |
+| `primitives.json` | 13.6 KB | generated |
 
 ## Upstream source files used
 

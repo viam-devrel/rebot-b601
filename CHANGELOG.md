@@ -56,8 +56,13 @@
   collision mesh is now 42 shells, the largest 816 faces.
 - The GLB byte budget assumed 28 bytes per face where the real figure is about 18, so every visual model
   stopped at ~10,970 faces and left a third of the 300 KB cap unspent. The RS visual models now carry
-  15,455-16,998 faces at 280-300 KB. The caps themselves are unchanged. DM's committed assets are
-  byte-pinned by `tests/test_dm_baseline.py` and still predate this fix; they need a deliberate rebuild.
+  15,455-16,998 faces at 280-300 KB. The caps themselves are unchanged.
+- The DM meshes were rebuilt with the same fix. `meshes/base_link.stl` was 3062 faces in 2409 loose
+  pieces whose largest was 7 triangles and is now 2949 faces in 59 shells, the largest 306; the worst
+  remaining DM collision mesh is 58 shells against 2958 faces. The DM visual models now carry
+  15,992-16,779 faces at up to 299 KB, where the byte-budget bug had capped them at ~10,970. Every DM
+  mesh byte therefore moved, so `tests/test_dm_baseline.py` re-pins its mesh hashes and GLB sizes; the
+  served URDF payloads are unchanged.
 
 ### Not yet on RS
 - Force control: `set_force`/`get_force`, `grab_with_force` and their `torque` aliases are refused with

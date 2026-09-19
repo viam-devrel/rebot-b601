@@ -11,6 +11,14 @@ gained a tool_mount root link and the fixed tool_mount_joint carrying the arm's 
 transform, so the gripper now starts where the served arm chain stops. The gripper mesh bytes
 (GRIPPER_MESH_SHAS) and the GLB sizes did not change.
 
+MESH_SHAS, GRIPPER_MESH_SHAS and GLB_SIZES were then re-pinned when the shell-by-shell
+decimation fix (b94bb14, RS only at the time) was applied to DM and its assets rebuilt.
+The old DM meshes were shards -- base_link.stl was 3062 faces in 2409 disconnected pieces
+whose largest was 7 triangles -- because the builder decimated without welding vertices
+first. Every DM mesh byte therefore moved, and the visual GLBs grew to spend the byte
+budget a wrong bytes-per-face estimate had left unused. The six URDF payload hashes did
+not move: the URDF text names mesh files, it does not embed their bytes.
+
 Note the two naming conventions: mesh keys are gripper_base/left_finger/right_finger while
 geometry labels are gripper_base/finger_left_link/finger_right_link."""
 
@@ -27,33 +35,33 @@ PRIMITIVES_SHA = "d044ebfb974253e1c2eacbe39afeff5b57d9bbe255800cfe39768cbc88dc4f
 NONE_SHA = "89e40b45c9b85350a256f8645cc7bd624768b38f968c08ed1802de060dbfe30b"
 MESHES_URDF_SHA = "335f8b28b4c25eb00b08e6e8b73bb4c728f4c0a2380549dae3a763fbd32c0256"
 MESH_SHAS = {  # meshes/<link>.stl -> sha256 of the bytes served in meshes mode
-    "meshes/base_link.stl": "d3401304571743d57931895e92322864a7a495ddc5b55cfee8df93fac5c49210",
-    "meshes/link1.stl": "e3ec037f5f94578a2857e2ee743c56aec46be1b1724f82b4650a882489be0526",
-    "meshes/link2.stl": "2de1c416baa54ca9de406bf5031e012f2ff16d8046710f82e5fdf4777cb17c52",
-    "meshes/link3.stl": "3aa13afaabf0e70428d3418814cbd7e1353ef71ae386a38b33c9dcdae02fc036",
-    "meshes/link4.stl": "3bbf8dd25d1c9e91940db4eb909021e3c6fb1b919ae2d0b28b438a3ac8d84c23",
-    "meshes/link5.stl": "9f7a0ea8d6695e7a7cc964a2c5a7482f323f2f5d6a3134ccd6765aff83b89b52",
-    "meshes/link6.stl": "304225f81169354870c0c1e2410c045600fd7401f29320fb255bd8f0abad54d2",
+    "meshes/base_link.stl": "5ab2bb444beb1ea85600f25f815705dc57349f0058f57c90c7723ff94ef7fb43",
+    "meshes/link1.stl": "fce0c245cb8d91c4d1c4f1ba23bc6593ec0f7dc7930ddeee71f85277b4855f12",
+    "meshes/link2.stl": "be660d201c790977423751b018cdc4eb61d3dace81ed497fe863b3ca8cb91c89",
+    "meshes/link3.stl": "d124c5af81ff46dc42bf5b3a3c451aa3df0a90dfc0cf219914626b966c5881bc",
+    "meshes/link4.stl": "4652d4fe2bd940019f0e806bcbf608ff0d73466f1f2dd7999fb77db9cf53ec5b",
+    "meshes/link5.stl": "07baaabd37acf17b3441fddabf8a50d71039bd66cff9110c2ba72844f6234149",
+    "meshes/link6.stl": "ef30182a5d6117990641d8cf72b20256ca419a23e28e0af3565573448488b4b7",
 }
 GRIPPER_PRIMITIVES_SHA = "72a1c45e8a83dfee1618f16efc4429ab1f72ae6df14d7ea9869ab8ec424c8023"
 GRIPPER_NONE_SHA = "2c2051997b0926ccb97ef3678476872bc70e7007f4fb0e1ef2814bc40dcc08b8"
 GRIPPER_MESHES_URDF_SHA = "50563347a81351788b273ffa8c09243449202cea17e1c04ba8a3840b5dc0dfdc"
 GRIPPER_MESH_SHAS = {  # meshes/<part>.stl -> sha256 of the bytes served in meshes mode
-    "meshes/gripper_base.stl": "eeb2b04d80cdb408c86da4628256e680ae0984756646b11a41ff683ed16cc0cc",
-    "meshes/left_finger.stl": "80c73899bfb5e1068a7fd90021881f96f8d97b91160b87769a4e1650478942ab",
-    "meshes/right_finger.stl": "a8db240aeb42a513c01cf990a1c314ec45367ff5dd77d30fc55778dac36912c2",
+    "meshes/gripper_base.stl": "6e9b8031b826824ba271c49b343f1040130ca2290c7255b5b668c777f5b01f51",
+    "meshes/left_finger.stl": "d24a8c610c8f342f9aa4a528416f52e5a291c90e52c8d6c0a032cbd804430557",
+    "meshes/right_finger.stl": "48e0db64b455544e131e558e201ab296e87012450d28d880fa562ed43cfb335a",
 }
 GLB_SIZES = {  # models/<link>.glb -> bytes
-    "base_link.glb": 200036,
-    "end_link.glb": 199328,
+    "base_link.glb": 305660,
+    "end_link.glb": 215080,
     "finger_left_link.glb": 90044,
     "finger_right_link.glb": 90072,
-    "link1.glb": 123604,
-    "link2.glb": 201004,
-    "link3.glb": 201232,
-    "link4.glb": 200316,
-    "link5.glb": 199672,
-    "link6.glb": 198840,
+    "link1.glb": 123320,
+    "link2.glb": 300952,
+    "link3.glb": 298376,
+    "link4.glb": 297676,
+    "link5.glb": 297872,
+    "link6.glb": 298208,
 }
 
 
