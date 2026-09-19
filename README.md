@@ -73,11 +73,27 @@ pointing there) and set `"port": "can0"` or `"PCAN_USBBUS1"`. macOS strips `DYLD
 a SIP-protected binary, so the venv must come from `uv` (which `run.sh` prefers) or another non-system
 Python; one built from `/usr/bin/python3` drops the export and motorbridge reports `load PCBUSB failed`.
 
-Not on RS yet: support covers joint reading and control only. `get_end_position`, `get_kinematics`,
-`get_geometries`, `get_3d_models`, and `move_to_position` describe the DM arm (the served URDF does carry the RS
-joint limits, so joint moves through viam-server are accepted), the gripper component refuses
-to attach to an RS arm, and discovery finds DM boards only. Manual mode is damping only, since gravity
-compensation uses the DM arm's mass model: `gravity_scale` is forced to 0 and `gravity_torques` refuses.
+The module serves the RS arm's own kinematic model: a bundled RS URDF, RS collision boxes and decimated
+meshes, and per-link GLB visuals. `get_end_position`, `get_kinematics`, `get_geometries`, `Get3DModels`
+and motion-service `move_to_position` all describe the RS arm. The RS URDF comes from Seeed's
+[`reBotArm_control_py`](https://github.com/Seeed-Projects/reBotArm_control_py) repository,
+`urdf/RS/urdf/ReBot_Arm_RS.urdf` at commit `76512eab38ba54f11830e7cdfcba68e11629f902`, with Seeed's
+`gripper_end`/`j_gripper_end` renamed `end_link`/`end_joint` so the mount frame is named as on DM. The RS
+mount frame sits at the gripper base, 166 mm from link6 (DM's is at the finger plane, 155 mm); at zero the
+RS end mount is at x 301.7, z 217.7 mm. The RS arm rests in the same folded posture as DM, with positive
+joint 2/3 angles where DM uses negative.
+
+Not on RS yet: the gripper component (RS ships `gripper_end` as a mount, not a 1-DoF gripper) refuses to
+attach to an RS arm, and discovery finds DM boards only. Manual mode is damping only until gravity
+compensation is checked on the bench: the RS mass model exists and its torques mirror DM's with opposite
+sign on joints 2 and 3, but `gravity_scale` is forced to 0 and `{"gravity_torques": true}` reports the
+model's numbers with an "unverified" note rather than applying them.
+
+Licence: the upstream `reBotArm_control_py` repository ships no LICENSE file and no SPDX headers at the
+pinned commit. `src/rebot_b601/assets/rs/ATTRIBUTION.md` redistributes the RS assets under
+CERN-OHL-W-2.0 (hardware) / Apache-2.0 (code), assumed by analogy with the sibling `reBot-DevArm` package
+that is licensed that way and is the DM source. Confirm this with Seeed before a registry release.
+
 Joint positions still work when the motors send no status frames (they are read as parameters), including
 with torque off, when stopped RobStride motors stop streaming and would otherwise report a frozen frame; the health
 report then shows `position_only: true` and the arm moves without fault, temperature or torque checks (see
@@ -101,7 +117,7 @@ Safety and Troubleshooting).
 | `tolerance_deg` | number | `2.0` | Settle tolerance for blocking moves |
 | `motion` | string | unset | Name of a motion service (usually `"builtin"`) used by `move_to_position` |
 | `collision_geometry` | string | `"primitives"` | Collision bodies in the served URDF: `"primitives"` (one box per link), `"meshes"` (decimated vendor STLs), or `"none"` |
-| `include_gripper_geometry` | bool | `false` | Attach the gripper-base box to the arm's end link. Leave off when the gripper component is configured, or the two will self-collide |
+| `include_gripper_geometry` | bool | `false` | Attach the gripper body box to `end_link` (DM: the `gripper_base` asset; RS: the `gripper_end` body). Finger GLBs exist only for DM, so RS 3D models show the body without fingers. Leave off when the gripper component is configured, or the two will self-collide |
 | `torque_limit_nm` | number or [6] | unset | Software collision stop: abort and hold when a joint's measured torque exceeds this for `torque_trip_polls` consecutive polls. Works on RS: a holding joint reports 1–2 Nm; torque reads 0 only while the motor is unpowered or known by position alone |
 | `torque_trip_polls` | int | `3` | Consecutive over-limit polls (at 10 Hz) that count as a collision |
 | `temperature_warn_c` | number | `60` | Log a warning when a motor is at or above this temperature |
@@ -111,7 +127,7 @@ Safety and Troubleshooting).
 | `enable_on_start` | bool | `true` | Enable torque when the component starts |
 | `disable_torque_on_close` | bool | `false` | Let the arm go limp when the component closes (it will slump under gravity!) |
 | `manual_mode_kp` / `manual_mode_kd` | number | `0` / `0.5` | MIT gains used in manual mode |
-| `gravity_scale` | number | `1.0` | Scale of the gravity-compensation feed-forward in manual mode (`0` disables it). Ignored on RS (forced to 0; the mass model is the DM arm's) |
+| `gravity_scale` | number | `1.0` | Scale of the gravity-compensation feed-forward in manual mode (`0` disables it). Ignored on RS: forced to 0 until the RS mass model is verified on the bench |
 | `payload_kg` | number | `0` | Extra mass at the end link for gravity compensation |
 | `gravity_vector` | [3] | `[0, 0, -9.81]` | Gravity in the arm's base frame, for non-upright mounts |
 
@@ -140,7 +156,7 @@ Safety and Troubleshooting).
   or the per-joint lists), or `extra` keys `speed_d`/`speed_r`, `acceleration_d`/`acceleration_r`,
   `move_hz`, `direct` (send the final target only), `interpolate: false`, `waitAtEnd: false`.
 - `move_to_position` is delegated to the motion service named by `motion`; without it the call
-  fails with an explanation (DM only; the RS arm serves no kinematics). The motion service plans against the URDF and collision geometry
+  fails with an explanation. The motion service plans against the URDF and collision geometry
   from `get_kinematics` and executes through `MoveThroughJointPositions`, which this module serves
   even though the Python SDK's stock arm servicer does not.
 - Streamed trajectories (`MoveThroughJointPositionsStreamed`) are paced by each point's timestamp.
@@ -181,7 +197,7 @@ Arm:
 | `{"clear_errors": true}` (also `clear_error`) | Clear latched motor faults and re-enable |
 | `{"set_zero_position": true}` | Store the current pose as zero (see Calibration) |
 | `{"manual_mode": "enter"}` / `"exit"` (also `enter_manual_mode` / `exit_manual_mode`) | Teaching mode: MIT mode with damping and gravity compensation; servos stay on. **Experimental**, see below |
-| `{"gravity_torques": true}` | The feed-forward torques manual mode would apply at the current pose. Not available on RS |
+| `{"gravity_torques": true}` | The feed-forward torques manual mode would apply at the current pose. On DM, the list of scaled, clamped torques; on RS, `{"torques_nm": [...], "note": ...}` with the model's six unscaled torques, since nothing is applied until the bench check passes |
 
 Each joint dict from `get_state` / `health` / `raw_state` carries `position_only`: true means the joint was read
 through its `mechPos` parameter rather than a status frame, so its velocity, torque, temperature and fault are
@@ -202,7 +218,7 @@ Gripper:
 ### Manual mode
 
 Manual mode switches the joints to MIT mode with `manual_mode_kp` (default 0) and `manual_mode_kd`
-damping, and streams a gravity-compensation torque computed from the vendor URDF's link masses and
+damping, and streams a gravity-compensation torque computed from the variant URDF's link masses and
 centres of mass at 50 Hz. It has **not been validated on hardware yet**: start with
 `gravity_scale: 0.3`, keep a hand on the arm, and raise the scale until the arm floats. Set
 `gravity_scale: 0` for damping only, which is all an RS arm does (see B601-RS).
@@ -210,18 +226,25 @@ centres of mass at 50 Hz. It has **not been validated on hardware yet**: start w
 
 ## Kinematics, geometry, and 3D models
 
-DM only; see B601-RS. The one RS adjustment: the served URDF carries the arm's soft `joint_limits_deg`
-instead of the DM ranges, because viam-server checks joint targets against them and the DM ranges would
-reject every position the RS motors can reach on joints 2 and 3.
+Each variant serves its own bundled URDF (`rebot_b601_dm.urdf`, `rebot_b601_rs.urdf`) with its own
+collision boxes, meshes and GLBs; the arm picks the model from `variant`.
 
+- Served joint limits differ. DM serves its URDF's own ranges, so its `get_kinematics` payload is
+  byte-identical to 0.2.0 (pinned by `tests/test_dm_baseline.py`). RS serves the module's soft
+  `joint_limits_deg`: the RS arm rests about a degree below its URDF's 0 on joints 2 and 3, and
+  viam-server rejects any target outside the served limits.
 - `get_kinematics` serves the bundled URDF with `<collision>` bodies added per `collision_geometry`.
   In `meshes` mode the decimated STLs are shipped in the same response, so viam-server needs no files.
 - `get_geometries` returns the per-link bounding boxes posed by the current joint state.
 - `Get3DModels` returns per-link GLB visual meshes for the app's 3D view.
 - The gripper serves a one-DoF URDF (left finger on a prismatic joint, right finger as a static
   envelope). Its kinematic input is the left finger's travel in metres, 0 (closed) to 0.05 (open).
-- Meshes come from Seeed's `reBot-DevArm` repository (see `src/rebot_b601/assets/ATTRIBUTION.md`).
-  Rebuild them with `python tools/build_assets.py`.
+- DM meshes come from Seeed's `reBot-DevArm` repository (`src/rebot_b601/assets/ATTRIBUTION.md`), RS
+  meshes from `reBotArm_control_py` (`src/rebot_b601/assets/rs/ATTRIBUTION.md`; see the licence note under
+  B601-RS). Rebuild with `python tools/build_assets.py --variant {dm,rs}`.
+- Every collision STL is decimated to a 150 KB cap. The RS source meshes are dense (164k triangles on
+  link3, reduced to about 3k), which leaves roughly 2 mm feature resolution. `base_link`, `link1` and
+  `link6` on RS are decimated from one large STL each and their GLB visuals look coarse.
 
 ## Calibration
 
@@ -289,12 +312,17 @@ make test            # pytest against an in-memory motorbridge fake (no hardware
 make lint            # ruff
 make module          # module.tar.gz for the registry (no bytecode)
 make check-bootstrap # run.sh on a clean copy, as viam-server would
+make assets          # rebuild the RS meshes, GLBs and collision boxes (= make assets-rs)
+make assets-dm       # rebuild DM's, deliberately: decimation output drifts with the trimesh/numpy
+                     # build, so a rebuild changes the bytes tests/test_dm_baseline.py pins and
+                     # that baseline has to be recaptured. requirements-dev.txt pins trimesh==5.1.0
 .venv/bin/python tests/smoke_hardware.py                                  # DM, read-only
 DYLD_LIBRARY_PATH=/usr/local/lib .venv/bin/python tests/smoke_hardware.py --variant rs --port can0          # RS, read-only (macOS prefix)
 DYLD_LIBRARY_PATH=/usr/local/lib .venv/bin/python tests/smoke_hardware.py --variant rs --port can0 --move   # MOVES joint 6 after an explicit Enter
 ```
 
-The RS read-only run is interactive: it pauses once for a staleness check (move a joint by hand, then press
+The smoke script prints FK for the variant it ran against (`end mount (FK, <variant>)`). The RS read-only
+run is interactive: it pauses once for a staleness check (move a joint by hand, then press
 Enter) before reading the joints again. `--move` enables torque and moves the arm; the arm refuses with its
 own fault message (undervoltage, for example) if any motor reports a fault. Flag abbreviations are disabled,
 so `--m` is an error, not a move.
