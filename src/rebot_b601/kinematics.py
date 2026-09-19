@@ -166,9 +166,9 @@ def arm_3d_models(model: spatial.Model) -> Dict[str, Mesh]:
 
 def gripper_urdf(model: spatial.Model, mode: str = "primitives") -> Tuple[bytes, Dict[str, Mesh]]:
     """A one-DoF gripper model: base + left finger on a prismatic joint + a
-    right-finger envelope covering its full travel. Root frame = the arm's
-    end_link, so configure the gripper with the arm as frame parent and zero
-    translation."""
+    right-finger envelope covering its full travel. Root frame = the arm's tool
+    mount, which is where the served arm chain ends, so configure the gripper with
+    the arm as frame parent and zero translation."""
     robot = ET.Element("robot", name="rebot_b601_gripper")
     meshes: Dict[str, Mesh] = {}
     g = model.gripper
@@ -191,6 +191,16 @@ def gripper_urdf(model: spatial.Model, mode: str = "primitives") -> Tuple[bytes,
             center[axis_i] += shift
             size[axis_i] += widen
             link.append(_collision_box(center, size))
+
+    mount_joint = model.chain[-1]  # end_joint: the tool mount -> mount plate transform
+    # The gripper's model starts where the arm's ends. This fixed joint carries that
+    # transform, so gripper_base and everything under it stay in the mount plate frame
+    # their primitives are authored in.
+    ET.SubElement(robot, "link", name="tool_mount")
+    j = ET.SubElement(robot, "joint", name="tool_mount_joint", type="fixed")
+    ET.SubElement(j, "origin", xyz=_fmt(mount_joint.xyz), rpy=_fmt(mount_joint.rpy))
+    ET.SubElement(j, "parent", link="tool_mount")
+    ET.SubElement(j, "child", link="gripper_base")
 
     add_link("gripper_base", model.mount_asset_key)
     add_link("finger_left_link", g.left_key)
@@ -227,9 +237,13 @@ def gripper_kinematics(model: spatial.Model, mode: str = "primitives"):
 
 
 def gripper_geometries(model: spatial.Model, finger_travel_m: float) -> List[Geometry]:
-    """Gripper boxes in the gripper's own frame for the given left-finger travel."""
+    """Gripper boxes in the gripper's own frame (the tool mount) for the given
+    left-finger travel."""
     g = model.gripper
-    identity = spatial._transform([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])
+    mj = model.chain[-1]
+    # Same transform the served URDF's tool_mount_joint carries: the primitives are
+    # authored in the mount plate frame, the returned frame is the tool mount.
+    mount = spatial._transform(spatial._rot_rpy(*mj.rpy), list(mj.xyz))
 
     def finger_frame(origin, travel):
         (xyz, rpy) = origin
@@ -237,12 +251,12 @@ def gripper_geometries(model: spatial.Model, finger_travel_m: float) -> List[Geo
         slide = spatial._transform(
             [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [a * travel for a in g.axis]
         )
-        return spatial._mat_mul(base, slide)
+        return spatial._mat_mul(mount, spatial._mat_mul(base, slide))
 
     out = []
     prim = model.primitives.get(model.mount_asset_key)
     if prim:
-        out.append(_box_geometry(identity, prim["center"], prim["size"], "gripper_base"))
+        out.append(_box_geometry(mount, prim["center"], prim["size"], "gripper_base"))
     prim = model.primitives.get(g.left_key)
     if prim:
         t = finger_frame(g.left_origin, finger_travel_m)

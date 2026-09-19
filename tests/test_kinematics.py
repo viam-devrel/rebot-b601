@@ -157,3 +157,40 @@ def test_gravity_torque_sign_and_magnitude():
     assert abs(DM.gravity_torques([0.0] * 6, extra_payload_kg=1.0)[2]) > abs(g[2])
     # Pointing the arm straight up (shoulder at -90) removes most of the load from the elbow.
     assert abs(DM.gravity_torques([0.0, math.radians(-90.0), 0.0, 0.0, 0.0, 0.0])[2]) < abs(g[2])
+
+
+@pytest.mark.parametrize("model", BOTH)
+def test_gripper_model_roots_at_the_tool_mount(model):
+    root = ET.fromstring(kinematics.gripper_kinematics(model, "primitives")[1])
+    links = [l.get("name") for l in root.findall("link")]
+    assert links[0] == "tool_mount"
+    mount = root.find("joint[@name='tool_mount_joint']")
+    assert mount.get("type") == "fixed"
+    assert mount.find("parent").get("link") == "tool_mount"
+    assert mount.find("child").get("link") == "gripper_base"
+    xyz = [float(v) for v in mount.find("origin").get("xyz").split()]
+    assert xyz == pytest.approx([0.0, 0.0, {"dm": 0.15539, "rs": 0.16621}[model.name]])
+
+
+@pytest.mark.parametrize("model", BOTH)
+def test_the_jaw_did_not_move_in_space(model):
+    """Round trip through the SERVED gripper URDF: the arm's tool mount composed with the
+    mount joint the gripper actually publishes must land on the mount plate, and the reported
+    body box must land where that transform puts it. The second half is what fails if the
+    composition order is reversed; the first half pins the published transform to the URDF."""
+    ts = model.link_transforms([0.0] * 6)
+    mount_t, plate = ts[model.link_order.index(model.tool_mount_link)], ts[-1]
+    o = ET.fromstring(kinematics.gripper_kinematics(model, "none")[1]).find(
+        "joint[@name='tool_mount_joint']/origin"
+    )
+    served = spatial._transform(
+        spatial._rot_rpy(*[float(v) for v in o.get("rpy").split()]),
+        [float(v) for v in o.get("xyz").split()],
+    )
+    composed = spatial._mat_mul(mount_t, served)
+    for r in range(3):
+        for c in range(4):
+            assert composed[r][c] == pytest.approx(plate[r][c], abs=1e-9), (model.name, r, c)
+    want = spatial.apply(served, model.primitives[model.mount_asset_key]["center"])
+    got = kinematics.gripper_geometries(model, 0.0)[0].center
+    assert (got.x, got.y, got.z) == pytest.approx([v * 1000 for v in want], abs=1e-6)

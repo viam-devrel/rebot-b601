@@ -74,6 +74,7 @@ class _Joint:
         origin = el.find("origin")
         xyz = [float(v) for v in (origin.get("xyz") or "0 0 0").split()]
         rpy = [float(v) for v in (origin.get("rpy") or "0 0 0").split()]
+        self.xyz, self.rpy = xyz, rpy
         self.origin = _transform(_rot_rpy(*rpy), xyz)
         axis_el = el.find("axis")
         self.axis = [float(v) for v in axis_el.get("xyz").split()] if axis_el is not None else [0.0, 0.0, 1.0]

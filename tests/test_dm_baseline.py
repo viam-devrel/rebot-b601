@@ -5,7 +5,11 @@ refactor it guards. If a DM output changes on purpose, recapture in the same com
 
 The three arm payload hashes were re-pinned at the frame split: the served arm chain now stops at
 the tool mount (link6), so the mount plate's link and its fixed joint are no longer in the URDF.
-The per-link mesh bytes (MESH_SHAS) and the gripper hashes were untouched by that trim.
+The per-link mesh bytes (MESH_SHAS) were untouched by that trim. The three gripper payload
+hashes were then re-pinned when the gripper's model was rerooted at the tool mount: its URDF
+gained a tool_mount root link and the fixed tool_mount_joint carrying the arm's end_joint
+transform, so the gripper now starts where the served arm chain stops. The gripper mesh bytes
+(GRIPPER_MESH_SHAS) and the GLB sizes did not change.
 
 Note the two naming conventions: mesh keys are gripper_base/left_finger/right_finger while
 geometry labels are gripper_base/finger_left_link/finger_right_link."""
@@ -31,9 +35,9 @@ MESH_SHAS = {  # meshes/<link>.stl -> sha256 of the bytes served in meshes mode
     "meshes/link5.stl": "9f7a0ea8d6695e7a7cc964a2c5a7482f323f2f5d6a3134ccd6765aff83b89b52",
     "meshes/link6.stl": "304225f81169354870c0c1e2410c045600fd7401f29320fb255bd8f0abad54d2",
 }
-GRIPPER_PRIMITIVES_SHA = "101e86cdadee6984996e3c64907cd25f3ac58665f75d5ce051321c8db3f0c2c5"
-GRIPPER_NONE_SHA = "b74001660e106099eb218c32405fc0021a1759bf26478868ae668977a5522900"
-GRIPPER_MESHES_URDF_SHA = "a1ed74575dd04d29df8f150de7588c682943edefeddfa405017cf3383c22f965"
+GRIPPER_PRIMITIVES_SHA = "72a1c45e8a83dfee1618f16efc4429ab1f72ae6df14d7ea9869ab8ec424c8023"
+GRIPPER_NONE_SHA = "2c2051997b0926ccb97ef3678476872bc70e7007f4fb0e1ef2814bc40dcc08b8"
+GRIPPER_MESHES_URDF_SHA = "50563347a81351788b273ffa8c09243449202cea17e1c04ba8a3840b5dc0dfdc"
 GRIPPER_MESH_SHAS = {  # meshes/<part>.stl -> sha256 of the bytes served in meshes mode
     "meshes/gripper_base.stl": "eeb2b04d80cdb408c86da4628256e680ae0984756646b11a41ff683ed16cc0cc",
     "meshes/left_finger.stl": "80c73899bfb5e1068a7fd90021881f96f8d97b91160b87769a4e1650478942ab",
@@ -80,4 +84,6 @@ def test_dm_gripper_payloads_are_unchanged():
 def test_dm_gripper_geometries_are_unchanged():
     geos = kinematics.gripper_geometries(spatial.MODELS["dm"], 0.02)
     assert [g.label for g in geos] == ["gripper_base", "finger_left_link", "finger_right_link"]
-    assert geos[1].center.y == pytest.approx(geos[0].center.y + 20.0 + 13.7, abs=0.2)
+    # The mount transform maps the gripper's local +y onto global -y, so the jaw separation
+    # keeps its magnitude and flips its sign. Same axis, negated, not a different axis.
+    assert geos[1].center.y == pytest.approx(geos[0].center.y - (20.0 + 13.7), abs=0.2)
