@@ -40,3 +40,13 @@ def fast_arm(factory):
     for m in ctrl.motors.values():
         m.vel_cap = 100.0  # rad/s: the fake keeps up with any streamed setpoint
     yield arm, ctrl
+
+
+@pytest.fixture
+def gripper(factory):
+    from src.rebot_b601.gripper import GRIPPER_CAN_ID, B601Gripper
+
+    g = B601Gripper.new(make_config("gripper", port="/dev/fake0", move_timeout_s=2.0), {})
+    motor = factory.latest.motors[GRIPPER_CAN_ID]
+    motor.vel_cap = 1000.0
+    return g, motor

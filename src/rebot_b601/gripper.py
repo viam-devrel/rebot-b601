@@ -26,7 +26,16 @@ from viam.resource.easy_resource import EasyResource
 from viam.utils import struct_to_dict
 
 from . import kinematics, spatial
-from .bus import DEFAULT_BAUD, LINK_ERRORS, BusError, SharedBus, detect_port, is_motor_timeout
+from .bus import (
+    DEFAULT_BAUD,
+    LINK_ERRORS,
+    VARIANT_VENDOR,
+    VARIANTS,
+    BusError,
+    SharedBus,
+    detect_port,
+    is_motor_timeout,
+)
 from .damiao import JointHealth, MotorFault
 from .ops import SingleOperationManager
 
@@ -37,6 +46,7 @@ GRIPPER_CAN_ID = 0x07
 DEFAULT_OPEN_DEG = -270.0
 DEFAULT_CLOSED_DEG = 0.0
 DEFAULT_SPEED_DEG_S = 900.0
+RS_SPEED_DEG_S = math.degrees(5.0)  # the vendor's vlim for the gripper; DM's is DEFAULT_SPEED_DEG_S
 MIN_SPEED_DEG_S = 10.0
 MAX_SPEED_DEG_S = 3000.0
 DEFAULT_TORQUE_RATIO = 0.07  # max grip force in [0, 1]
@@ -88,6 +98,23 @@ class B601Gripper(Gripper, EasyResource):
     @classmethod
     def validate_config(cls, config: ComponentConfig) -> Tuple[Sequence[str], Sequence[str]]:
         attrs = struct_to_dict(config.attributes)
+        variant = attrs.get("variant", "dm")
+        if variant not in VARIANTS:
+            raise ValueError("variant must be 'dm' (Damiao, USB serial bridge) or 'rs' (RobStride, CAN)")
+        if variant == "rs":
+            if not attrs.get("port"):
+                raise ValueError(
+                    "variant 'rs' needs 'port': the CAN channel, e.g. \"can0\" (Linux SocketCAN) "
+                    'or "PCAN_USBBUS1" (macOS PCAN). The arm dependency cannot supply it: under '
+                    "viam-server that dependency is a gRPC client, not the local arm object"
+                )
+            if "open_position_deg" not in attrs:  # not `not attrs.get(...)`: 0 is a legal angle
+                raise ValueError(
+                    "variant 'rs' needs 'open_position_deg': the motor angle at the fully open "
+                    "jaw, in degrees from the closed zero. Nothing records it for the B601-RS and "
+                    "it depends on where the jaws sat when the motor was zeroed, so measure it "
+                    "with: tests/smoke_hardware.py --variant rs --port <chan> --gripper"
+                )
         ratio = float(attrs.get("torque_ratio", DEFAULT_TORQUE_RATIO))
         if not 0.0 < ratio <= 1.0:
             raise ValueError("torque_ratio must be in (0, 1]")
@@ -101,6 +128,10 @@ class B601Gripper(Gripper, EasyResource):
 
     def reconfigure(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
         attrs = struct_to_dict(config.attributes)
+        self.variant = attrs.get("variant", "dm")
+        rs = self.variant == "rs"
+        vendor = VARIANT_VENDOR[self.variant]
+        self.model = spatial.MODELS[self.variant]
         port = attrs.get("port")
         baud = attrs.get("baud")
         arm_name = attrs.get("arm")
@@ -112,29 +143,32 @@ class B601Gripper(Gripper, EasyResource):
                     baud = baud or dep.bus.baud
         port = port or detect_port()
         baud = int(baud or DEFAULT_BAUD)
-        if SharedBus.vendor_of(port) not in (None, "damiao"):
-            # Under viam-server the arm dependency is a gRPC client, so the only reliable
-            # sign of an RS arm is the bus it already holds. The gripper drives its motor
-            # in Damiao FORCE_POS mode and would otherwise fail with a vendor mismatch.
+        bus_vendor = SharedBus.vendor_of(port)
+        if bus_vendor is not None and bus_vendor != vendor:
             raise ValueError(
-                f"the gripper is not supported on the B601-RS yet (an RS arm holds {port}); "
-                "remove the gripper component for now"
+                f"gripper variant '{self.variant}' expects {vendor} motors but {port} is already "
+                f"open for {bus_vendor} motors; set the gripper's 'variant' to match the arm"
             )
 
         self.open_deg = float(attrs.get("open_position_deg", DEFAULT_OPEN_DEG))
         self.closed_deg = float(attrs.get("closed_position_deg", DEFAULT_CLOSED_DEG))
-        self.speed_deg_s = float(attrs.get("speed_deg_s", DEFAULT_SPEED_DEG_S))
+        self.speed_deg_s = float(attrs.get("speed_deg_s", RS_SPEED_DEG_S if rs else DEFAULT_SPEED_DEG_S))
         self.torque_ratio = float(attrs.get("torque_ratio", DEFAULT_TORQUE_RATIO))
+        if rs and "torque_ratio" in attrs:
+            LOGGER.warning(
+                "torque_ratio is ignored on the B601-RS: RobStride has no force-limited position "
+                "mode, so grip force is not capped by this module yet"
+            )
         self.holding_threshold_deg = float(attrs.get("holding_threshold_deg", DEFAULT_HOLDING_THRESHOLD_DEG))
         self.stall_polls = int(attrs.get("stall_polls", DEFAULT_STALL_POLLS))
         self.move_timeout_s = float(attrs.get("move_timeout_s", DEFAULT_MOVE_TIMEOUT_S))
         self.collision_mode = attrs.get("collision_geometry", "primitives")
         self.reconnect_enabled = bool(attrs.get("reconnect", True))
 
-        if self.bus is not None and not self.bus.matches(port, baud):
+        if self.bus is not None and not self.bus.matches(port, baud, vendor):
             self._release_bus()
         if self.bus is None:
-            self.bus = SharedBus.acquire(port, baud)
+            self.bus = SharedBus.acquire(port, baud, vendor)
             self.bus.on_reconnect(self._on_bus_reconnect)
 
         self._configure_motor()
@@ -189,6 +223,10 @@ class B601Gripper(Gripper, EasyResource):
                         if attempt == _ENSURE_MODE_RETRIES:
                             raise
                         time.sleep(_SETTLE_SEC)
+                if self.variant == "rs":
+                    # RobStride motors stream status frames (and so fill get_state)
+                    # only once asked to; without this, every read is a param round-trip.
+                    motor.robstride_set_active_report(True)
 
         self._bus_call(_do)
         self._torque_enabled = True
@@ -264,10 +302,10 @@ class B601Gripper(Gripper, EasyResource):
         return self.closed_deg + fraction * (self.open_deg - self.closed_deg)
 
     def travel_m_from_deg(self, pos_deg: float) -> float:
-        return self.fraction_from_deg(pos_deg) * kinematics.FINGER_TRAVEL_M
+        return self.fraction_from_deg(pos_deg) * self.model.gripper.travel_m
 
     def deg_from_travel_m(self, travel_m: float) -> float:
-        return self.deg_from_fraction(float(travel_m) / kinematics.FINGER_TRAVEL_M)
+        return self.deg_from_fraction(float(travel_m) / self.model.gripper.travel_m)
 
     # ---------------------------------------------------------- Viam API
 
@@ -301,13 +339,11 @@ class B601Gripper(Gripper, EasyResource):
         return abs(state.vel) > _MOVING_VEL_RAD_S
 
     async def get_kinematics(self, *, extra=None, timeout=None, **kwargs):
-        return kinematics.gripper_kinematics(spatial.MODELS["dm"], self.collision_mode)  # Task 6: self.model
+        return kinematics.gripper_kinematics(self.model, self.collision_mode)
 
     async def get_geometries(self, *, extra=None, timeout=None, **kwargs) -> List[Geometry]:
         state = await asyncio.to_thread(self._state)
-        return kinematics.gripper_geometries(
-            spatial.MODELS["dm"], self.travel_m_from_deg(math.degrees(state.pos))
-        )  # Task 6: self.model
+        return kinematics.gripper_geometries(self.model, self.travel_m_from_deg(math.degrees(state.pos)))
 
     async def get_current_inputs(self, *, extra=None, timeout=None, **kwargs):
         """Single input: left-finger travel in metres (0 = closed, 0.05 = fully open)."""

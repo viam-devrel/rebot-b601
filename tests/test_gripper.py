@@ -5,16 +5,8 @@ import pytest
 from src.rebot_b601.arm import B601Arm
 from src.rebot_b601.bus import SharedBus
 from src.rebot_b601.damiao import MotorFault
-from src.rebot_b601.gripper import GRIPPER_CAN_ID, B601Gripper
+from src.rebot_b601.gripper import B601Gripper
 from tests.conftest import make_config
-
-
-@pytest.fixture
-def gripper(factory):
-    g = B601Gripper.new(make_config("gripper", port="/dev/fake0", move_timeout_s=2.0), {})
-    motor = factory.latest.motors[GRIPPER_CAN_ID]
-    motor.vel_cap = 1000.0
-    return g, motor
 
 
 async def test_open_and_grab_without_object(gripper):

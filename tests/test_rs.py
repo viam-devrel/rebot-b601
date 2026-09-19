@@ -10,6 +10,7 @@ from src.rebot_b601 import spatial
 from src.rebot_b601.arm import ARM_CAN_IDS, B601Arm
 from src.rebot_b601.bus import BusError, SharedBus, canonical_device
 from src.rebot_b601.damiao import JointHealth, MotorFault
+from src.rebot_b601.gripper import B601Gripper
 from tests.conftest import FAST, make_config
 
 RS = dict(FAST, variant="rs", port="can0")
@@ -287,15 +288,18 @@ def test_switching_variant_on_the_same_port_reopens_the_bus(factory):
     assert first.controller is None  # released
 
 
-def test_gripper_refuses_to_attach_to_an_rs_arm(factory):
-    """Under viam-server the arm dependency is a gRPC client, so the gripper cannot read its
-    variant; the RS arm's hold on the CAN channel is the reliable sign."""
-    from src.rebot_b601.gripper import B601Gripper
-
+async def test_gripper_attaches_to_an_rs_arm(factory):
+    """The RS guard is gone: an rs gripper shares the arm's CAN channel."""
     arm = B601Arm.new(make_config("arm", **RS), {})
-    with pytest.raises(ValueError, match="not supported on the B601-RS"):
-        B601Gripper.new(make_config("gripper", arm="arm", port="can0"), {})
-    assert arm.bus.controller is not None  # the arm's bus is untouched by the failed gripper build
+    g = B601Gripper.new(make_config("gripper", variant="rs", port=RS["port"], open_position_deg=-120.0), {})
+    assert g.bus is arm.bus
+
+
+def test_dm_gripper_refuses_an_rs_bus(factory):
+    """A gripper left at the default dm variant must not open a Damiao controller on a CAN channel."""
+    B601Arm.new(make_config("arm", **RS), {})
+    with pytest.raises(ValueError, match="robstride"):
+        B601Gripper.new(make_config("gripper", port=RS["port"]), {})
 
 
 def test_rs_attributes_still_override_the_defaults(factory):
