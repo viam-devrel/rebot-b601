@@ -5,10 +5,13 @@ enables torque. With --move it nudges joint 6 by +5 deg and back, then stops; to
 enabled only after you confirm at an explicit prompt, and the move is refused with the
 arm's own message if any motor reports a fault, a collision or an over-temperature.
 
-With --gravity-check the arm is built too (torque on, so the motors hold where they are) but
-nothing is commanded: it prints, per joint, the torque the motors measure while holding next
-to the gravity torque the model predicts, so you can see whether the signs agree before
-turning gravity compensation on. Stop viam-server first: the CAN channel cannot be shared.
+With --gravity-check the arm is built in MIT mode, told to hold exactly where it already is,
+and then left alone: it prints, per joint, the torque the motors report while holding next to
+the gravity torque the model predicts, so you can see whether the signs agree before turning
+gravity compensation on. MIT is not optional here. The torque field is not a sensor reading,
+it is inferred from the position loop's tracking error, and profile position drives that error
+to zero, so every joint reports about 0 Nm however hard it is working. Stop viam-server first:
+the CAN channel cannot be shared.
 
 Run:
   .venv/bin/python tests/smoke_hardware.py                          # DM, port auto-detected
@@ -45,8 +48,10 @@ ap.add_argument("--move", action="store_true", help="enable torque and nudge joi
 ap.add_argument(
     "--gravity-check",
     action="store_true",
-    help="read-only: enable torque so the arm holds, then compare measured holding torque with "
-    "the model's gravity torque per joint (stop viam-server first; the CAN channel cannot be shared)",
+    help="holds without moving: enables MIT torque at the arm's current pose, then compares the "
+    "holding torque each joint reports with the model's gravity torque. MIT is required, the "
+    "torque figure is derived from tracking error and reads ~0 in profile position "
+    "(stop viam-server first; the CAN channel cannot be shared)",
 )
 ap.add_argument(
     "--gripper",
@@ -176,16 +181,29 @@ from src.rebot_b601.arm import ARM_CAN_IDS, B601Arm  # noqa: E402
 from src.rebot_b601.damiao import CollisionError, MotorFault, OverTemperatureError  # noqa: E402
 
 attrs = {"variant": args.variant, "port": port, "speed_deg_s": 20}
+if args.gravity_check:
+    # MIT, and torque left off at build: gravity_check() enables it only once it has read
+    # where the arm is resting, so the motors never go live without a setpoint to hold.
+    attrs["control_mode"] = "mit"
+    attrs["enable_on_start"] = False
 arm = B601Arm.new(ComponentConfig(name="smoke", attributes=dict_to_struct(attrs)), {})
 
 
 def gravity_check():
+    # Measured 2026-09-19 in profile position: every joint read under 0.17 Nm while the model
+    # wanted up to 5.9, and the elbow sat 20 C hotter than its neighbours while reporting
+    # 0.16 Nm. The torque field is inferred from tracking error, which that mode drives to
+    # zero, so the column was meaningless. MIT holds with a standing error set by the load.
+    resting = arm._read_positions_deg()
+    arm._configure_motors()  # enable + MIT; also flips the flag that lets full frames through
+    arm._send_targets_deg(resting)  # hold where it already is: no lurch, and no limp window
+    time.sleep(1.0)  # let each joint settle into the sag the estimate is read from
     print("\nhealth:", arm._health_report())
     positions = arm._read_positions_deg()
     states = arm._read_states()
     model = spatial.MODELS[args.variant]
     g = model.gravity_torques([math.radians(d) for d in positions], arm.gravity_vector, arm.payload_kg)
-    print(f"\ngravity check at {[round(p, 1) for p in positions]} deg (torque on, holding)")
+    print(f"\ngravity check at {[round(p, 1) for p in positions]} deg (MIT, holding)")
     print(f"  {'joint':7s} {'measured':>9s} {'model':>9s} {'expect':>9s}  sign")
     ok = True
     for i, cid in enumerate(ARM_CAN_IDS):
