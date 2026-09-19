@@ -49,6 +49,11 @@ class FakeMotor:
         self.closed = False  # motorbridge.Motor.close() was called (frees the handle's bus reference)
         self.active_report = False  # RobStride: status frames stream only when this is on
         self.stream_state = True  # False: get_state() never fills, only param reads work
+        # RobStride, bench 2026-09-19: the status stream runs ~0.5 s behind the motor, so a frame
+        # read during a move describes where the jaw was, not where it is. True freezes get_state()
+        # at the frame captured when it was set, while mechPos reads stay live: the extreme of
+        # that lag, and enough to tell a stale read from a slow motor.
+        self.stream_lag = False
         self.param_reads = 0
         # RobStride RW parameters the module writes: limit_spd (rad/s) and limit_cur (A).
         # The limit_cur value stands in for the motor's factory current limit.
@@ -112,6 +117,10 @@ class FakeMotor:
         if self.vendor == "robstride":
             # Real RobStride motors ignore request_feedback(); state arrives only as
             # streamed status frames, which need active report on and the motor running.
+            if self.stream_lag:
+                if self._frozen is None:
+                    self._frozen = self._state()
+                return self._frozen
             if not self.enabled and self._frozen is not None:
                 return self._frozen
             return self._state() if self.active_report else None

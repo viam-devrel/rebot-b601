@@ -108,7 +108,17 @@ def jog_gripper():
         print("no feedback from gripper motor 0x07; check power and wiring")
         return
     target = math.degrees(start.pos)
+
+    def deg(state):
+        return math.degrees(state.pos) if state is not None else float("nan")
+
     print(f"gripper at {target:.2f} deg; positive/negative steps, 'q' to quit")
+    # Each step prints the streamed status frame and the mechPos parameter read side by side,
+    # with the time since the command went out, then mechPos again half a second later. Both
+    # answer the question the single "actual" column could not: if 'param' tracks the target
+    # while 'stream' trails it, the streamed read is stale; if both trail together, the motor
+    # is genuinely slow -- and then 'later' has climbed past 'param' because it is still moving.
+    print("  stream = streamed status frame, param = mechPos round trip, later = mechPos again")
     while True:
         raw = input(f"step [{step:+.1f}] > ").strip()
         if raw.lower() == "q":
@@ -120,15 +130,24 @@ def jog_gripper():
                 print("  not a number")
                 continue
         target += step
+        sent = time.monotonic()
         with bus.lock:
             if vendor == "robstride":
                 motor.send_pos_vel(math.radians(target), math.radians(90.0))
             else:
                 motor.send_force_pos(math.radians(target), math.radians(90.0), 0.07)
         time.sleep(0.5)
-        state = bus.poll_feedback([7], positions_only=False)[7]
-        actual = math.degrees(state.pos) if state is not None else float("nan")
-        print(f"  target {target:8.2f}  actual {actual:8.2f} deg")
+        streamed = bus.poll_feedback([7], positions_only=False)[7]
+        t_stream = time.monotonic() - sent
+        param = bus.poll_feedback([7], positions_only=True)[7]
+        t_param = time.monotonic() - sent
+        time.sleep(0.5)
+        later = bus.poll_feedback([7], positions_only=True)[7]
+        t_later = time.monotonic() - sent
+        print(
+            f"  target {target:8.2f}  stream {deg(streamed):8.2f} (+{t_stream:.2f}s)  "
+            f"param {deg(param):8.2f} (+{t_param:.2f}s)  later {deg(later):8.2f} (+{t_later:.2f}s)"
+        )
     print(f"\nrecord this as open_position_deg once the jaws are fully open: {target:.1f}")
 
 

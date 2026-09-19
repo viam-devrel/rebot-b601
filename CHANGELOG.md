@@ -68,6 +68,24 @@
   after detecting a stall while leaving the motor driving at a target it could not reach. A move that
   ends short of its target now re-commands the angle the jaws actually reached. DM is unchanged there:
   `FORCE_POS` caps the current by design and that standing push is how a DM grab keeps its grip.
+- `open()` no longer moves the RS jaw a centimetre and then drives it straight back to closed. With
+  torque on, gripper position came from the streamed RobStride status frame, which the bench found
+  running about half a second behind the motor: every 50 ms poll of a move in flight returned the same
+  angle, the loop counted four "stopped" polls a third of a second in, and the stall re-command then
+  asked for that stale, near-closed angle. Position samples during a move (and in `stop()`) now come
+  from the `mechPos` parameter read (RID `0x7019`), a request/response round trip that is current by
+  construction -- the same path the arm already uses with torque off. Readiness, health and status
+  reads still use the streamed frame, which is the only one carrying faults and temperatures. A
+  `mechPos` read that times out counts as a missing sample, not as a still jaw, so a silent motor
+  cannot look like a stall.
+- The RS stall re-command only fires when the jaw was actually seen to move and then stop. If no poll
+  ever showed movement, the reading is the suspect part, not the jaw, and commanding a position from it
+  turns a bad read into a physical reversal; the move now logs a warning naming stale or unresponsive
+  feedback and leaves the commanded target alone.
+- `tests/smoke_hardware.py --gripper` prints both reads per step -- the streamed frame and the `mechPos`
+  parameter read, each with the time since the command was sent, plus a second `mechPos` read half a
+  second later. A `param` column that tracks the target while `stream` trails it means the read is
+  stale; both trailing together, with `later` still climbing, means the motor is genuinely slow.
 - `limit_cur` is written as an absolute current and never derived from the motor's current value. It
   lives in motor RAM and survives a resource restart, so a cap computed from a read-back would be
   recomputed from the module's own previous cap and ratchet down on every restart -- with a 0.3 ratio,

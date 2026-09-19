@@ -3,6 +3,7 @@ import math
 import time
 
 import pytest
+from motorbridge import CallError
 
 from src.rebot_b601 import spatial
 from src.rebot_b601.gripper import (
@@ -206,3 +207,50 @@ async def test_rs_does_not_recommand_when_the_jaws_arrive(rs_gripper):
     g, motor = rs_gripper
     await g.open()
     assert motor.commands[-1][1] == pytest.approx(math.radians(g.open_deg))
+
+
+async def test_rs_does_not_false_stall_when_the_streamed_frame_is_stale(rs_gripper):
+    """Bench 2026-09-19: the RS status stream runs about half a second behind the motor, so every
+    50 ms poll of a move read the same angle, the loop called it a stall a third of a second in,
+    and then re-commanded that stale angle -- open() moved a centimetre and drove back to closed.
+    Position samples during a move must come from the mechPos round trip, which is current."""
+    g, motor = rs_gripper
+    motor.stream_lag = True  # get_state() freezes; mechPos stays live
+    pos = await asyncio.to_thread(g._move_until_settled, g.open_deg)
+    assert pos == pytest.approx(g.open_deg, abs=2.0)
+    assert math.degrees(motor.commands[-1][1]) == pytest.approx(g.open_deg, abs=2.0)
+
+
+async def test_rs_does_not_recommand_a_position_it_never_saw_move(rs_gripper, caplog):
+    """If the jaw never appears to move, the reading is what is suspect, not the jaw; commanding
+    from it turns a bad read into a physical reversal. Say so instead."""
+    import logging
+
+    g, motor = rs_gripper
+    motor.stall_at = 0.0  # jammed: the jaw cannot leave where it is
+    motor.commands.clear()
+    with caplog.at_level(logging.WARNING, logger="src.rebot_b601.gripper"):
+        await asyncio.to_thread(g._move_until_settled, g.open_deg)
+    assert len(motor.commands) == 1, "re-commanded from a reading that never showed movement"
+    assert motor.commands[0][1] == pytest.approx(math.radians(g.open_deg))
+    assert any("stale" in r.getMessage() for r in caplog.records)
+
+
+async def test_rs_move_survives_a_mechpos_timeout(rs_gripper):
+    """A timed-out parameter read is a missing sample, not a still jaw: it must neither wedge the
+    loop nor be counted toward the stall streak."""
+    g, motor = rs_gripper
+    motor.stream_lag = True
+    reads = {"n": 0}
+    real = motor.robstride_get_param_f32
+
+    def flaky(param_id, timeout_ms=1000):
+        if param_id == 0x7019:
+            reads["n"] += 1
+            if reads["n"] % 2:  # every other mechPos read goes unanswered
+                raise CallError("param 0x7019 read timed out")
+        return real(param_id, timeout_ms)
+
+    motor.robstride_get_param_f32 = flaky
+    pos = await asyncio.to_thread(g._move_until_settled, g.open_deg)
+    assert pos == pytest.approx(g.open_deg, abs=2.0)

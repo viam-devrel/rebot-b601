@@ -339,6 +339,23 @@ class B601Gripper(Gripper, EasyResource):
             raise BusError("no feedback from gripper motor 0x07; check power and wiring")
         return state
 
+    def _live_state(self):
+        """Feedback for a jaw that may be moving, or None on RS if the read times out.
+
+        Bench 2026-09-19: with torque on, ``_state()`` takes the streamed-frame path and the
+        RobStride status stream runs about half a second behind the motor, so every poll of a
+        move in flight returns the same stale angle -- which reads as "stopped". The mechPos
+        parameter read is a request/response round trip and is therefore current; it is the
+        same path the arm uses with torque off. It costs one round trip per poll (bounded by
+        ``bus._MECHPOS_TIMEOUT_MS``), and a timed-out read comes back as None rather than an
+        exception: a missing sample, never evidence that the jaw is still.
+
+        DM's streamed frame is current, and it carries the velocity the settle test needs.
+        """
+        if self.variant != "rs":
+            return self._state()
+        return self._bus_call(self.bus.poll_feedback, [GRIPPER_CAN_ID], positions_only=True)[GRIPPER_CAN_ID]
+
     def _check_ready(self, state):
         health = JointHealth.from_state(GRIPPER_CAN_ID, state, self.bus.vendor)
         if health.fault:
@@ -379,14 +396,23 @@ class B601Gripper(Gripper, EasyResource):
             self._send_target(target_deg, speed_deg_s, torque_ratio)
             deadline = time.monotonic() + self.move_timeout_s
             still = 0
+            moved = False
             pos = math.degrees(state.pos)
             # Give it a moment to start moving before stall detection kicks in.
             time.sleep(0.2)
             while time.monotonic() < deadline:
                 if cancel.is_set():
                     break
+                state = self._live_state()
+                if state is None:
+                    # RS mechPos timed out: no sample this tick. Counting it as "stopped"
+                    # would make a quiet bus indistinguishable from a stall, so the streak
+                    # restarts instead. The read already blocked for _MECHPOS_TIMEOUT_MS and
+                    # move_timeout_s still bounds the loop.
+                    still = 0
+                    time.sleep(_POLL_SEC)
+                    continue
                 prev = pos
-                state = self._state()
                 pos = math.degrees(state.pos)
                 if abs(pos - target_deg) < _ARRIVE_TOL_DEG:
                     break
@@ -396,6 +422,7 @@ class B601Gripper(Gripper, EasyResource):
                     stopped = abs(pos - prev) < _RS_SETTLE_DELTA_DEG
                 else:
                     stopped = abs(state.vel) < _MOVING_VEL_RAD_S
+                moved = moved or not stopped
                 still = still + 1 if stopped else 0
                 if still >= self.stall_polls:
                     break  # stalled (on an object, or at the mechanical limit)
@@ -406,7 +433,19 @@ class B601Gripper(Gripper, EasyResource):
                 # driving at an unreachable target and grinds into the object until it faults.
                 # Hold where it actually stopped. Not done on DM: FORCE_POS caps the current by
                 # design, and that standing push is how a DM grab keeps its grip on the object.
-                self._send_target(pos)
+                if moved:
+                    self._send_target(pos)
+                else:
+                    # Never seeing the jaw move means the readings are the suspect part, not the
+                    # jaw. Re-commanding one would turn a bad read into a physical reversal --
+                    # the 0.6.0 bench failure where open() drove straight back to closed.
+                    LOGGER.warning(
+                        "gripper never moved off %.1f deg while driving to %.1f: feedback is stale "
+                        "or the motor is unresponsive, so the target is left as commanded rather "
+                        "than re-issued from a reading we do not trust",
+                        pos,
+                        target_deg,
+                    )
             return pos
 
     # ------------------------------------------------- unit conversions
@@ -450,7 +489,10 @@ class B601Gripper(Gripper, EasyResource):
         def _stop():
             self.ops.cancel_current()
             with self.ops.new():
-                pos = math.degrees(self._state().pos)
+                # The jaw is moving, so the streamed frame lags it (see _live_state); holding
+                # at a stale angle would walk it backwards. Fall back only if mechPos times out.
+                state = self._live_state()
+                pos = math.degrees(state.pos if state is not None else self._state().pos)
                 self._send_target(pos)
 
         await asyncio.to_thread(_stop)
