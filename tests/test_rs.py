@@ -335,8 +335,6 @@ async def test_rs_manual_mode_has_no_gravity_feedforward(factory):
     arm = B601Arm.new(make_config("arm", **dict(RS, gravity_scale=1.0)), {})
     assert arm.gravity_scale == 0.0
     assert arm.manual_torques([0.0] * 6) == [0.0] * 6
-    with pytest.raises(NotImplementedError):
-        await arm.do_command({"gravity_torques": True})
     dm = B601Arm.new(make_config("dm", **dict(FAST, gravity_scale=0.5)), {})
     assert dm.gravity_scale == 0.5
 
@@ -357,7 +355,7 @@ async def test_rs_arm_serves_the_rs_model(factory):
     assert rs.model is spatial.MODELS["rs"] and dm.model is spatial.MODELS["dm"]
     root = ET.fromstring((await rs.get_kinematics())[1])
     assert root.get("name") == "rebot_b601_rs"
-    assert root.find("joint[@name='joint2']/limit").get("lower") == str(math.radians(-5.0))
+    assert float(root.find("joint[@name='joint2']/limit").get("lower")) == pytest.approx(math.radians(-5.0))
     p_rs = await rs.get_end_position()
     p_dm = await dm.get_end_position()
     assert math.isclose(p_rs.x, 301.7, abs_tol=0.5) and math.isclose(p_rs.z, 217.7, abs_tol=0.5)
@@ -368,6 +366,8 @@ async def test_rs_manual_torques_use_the_rs_model_but_stay_zero_until_enabled(fa
     rs = B601Arm.new(make_config("arm", **RS), {})
     assert rs.gravity_scale == 0.0  # still forced off until the bench check (Task 8)
     assert rs.manual_torques([0] * 6) == [0.0] * 6
+    rs.gravity_scale = 1.0  # the guard, not an empty model, is what zeroes the torques
+    assert any(abs(t) > 0.1 for t in rs.manual_torques([0, 90, 0, 0, 0, 0]))
 
 
 def test_dm_manual_torques_clamp_to_the_dm_efforts(factory):
@@ -380,10 +380,21 @@ def test_dm_manual_torques_clamp_to_the_dm_efforts(factory):
 def test_missing_primitives_are_warned_about_once_at_configure(factory, caplog):
     import logging
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING, logger="src.rebot_b601.arm"):
         B601Arm.new(make_config("arm", **RS), {})  # assets/rs does not exist until Task 6
-    assert any("no collision primitives" in r.getMessage() for r in caplog.records)
+    assert sum(1 for r in caplog.records if "no collision primitives" in r.getMessage()) == 1
     caplog.clear()
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING, logger="src.rebot_b601.arm"):
         B601Arm.new(make_config("arm2", port="/dev/fake1"), {})  # DM has assets
     assert not any("no collision primitives" in r.getMessage() for r in caplog.records)
+
+
+async def test_rs_gravity_torques_command_reports_but_does_not_apply(factory):
+    arm = B601Arm.new(make_config("arm", **RS), {})
+    r = await arm.do_command({"gravity_torques": True})
+    assert "unverified" in r["gravity_torques"]["note"]
+    assert len(r["gravity_torques"]["torques_nm"]) == 6
+    assert arm.gravity_scale == 0.0  # reported, never applied
+    dm = B601Arm.new(make_config("arm2", **dict(FAST, port="/dev/fake1")), {})
+    taus = (await dm.do_command({"gravity_torques": True}))["gravity_torques"]
+    assert len(taus) == 6 and all(isinstance(t, float) for t in taus)

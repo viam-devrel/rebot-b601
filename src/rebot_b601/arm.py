@@ -1,5 +1,6 @@
-"""Viam arm component for the Seeed Studio reBot Arm B601
-(DM: Damiao CAN motors over a serial bridge; RS: RobStride motors over CAN).
+"""Viam arm component for the Seeed Studio reBot Arm B601 (6 DoF).
+
+DM: Damiao CAN motors over a serial bridge. RS: RobStride motors over CAN.
 """
 
 import asyncio
@@ -171,10 +172,11 @@ class B601Arm(Arm, EasyResource):
         if not self.model.primitives:
             # ponytail: log only. Raising would refuse to build an RS arm before its assets
             # exist, but a primitives-mode URDF with zero boxes lets the planner route the arm
-            # through itself, so this warning is the only signal that collision data is missing.
+            # through itself, so this warning is the only signal that collision data is missing;
+            # raise instead once every variant ships assets.
             LOGGER.warning(
-                "no collision primitives for the %s model under %s; the served URDF and "
-                "get_geometries carry no collision bodies",
+                "no collision primitives for the %s model under %s; the served URDF "
+                "(primitives mode) and get_geometries carry no collision bodies",
                 self.variant,
                 self.model.assets_dir,
             )
@@ -208,10 +210,13 @@ class B601Arm(Arm, EasyResource):
         self.manual_kd = float(attrs.get("manual_mode_kd", DEFAULT_MANUAL_KD))
         self.gravity_scale = float(attrs.get("gravity_scale", 1.0))
         if rs:
-            # spatial.py models the DM arm; the RS arm's axes differ, so the feed-forward
-            # would have the wrong sign. Manual mode stays available as pure damping.
+            # The RS gravity model exists (spatial.MODELS["rs"]) but is unverified on hardware; keep the
+            # feed-forward off until the bench comparison in the plan's Task 8 passes.
             if attrs.get("gravity_scale"):
-                LOGGER.warning("gravity compensation is not modelled for the B601-RS yet; manual mode is damping only")
+                LOGGER.warning(
+                    "gravity compensation on the B601-RS is not yet verified on hardware; "
+                    "gravity_scale is forced to 0 (manual mode is damping only)"
+                )
             self.gravity_scale = 0.0
         self.payload_kg = float(attrs.get("payload_kg", 0.0))
         gv = attrs.get("gravity_vector", [0.0, 0.0, -spatial.GRAVITY_M_S2])
@@ -826,10 +831,21 @@ class B601Arm(Arm, EasyResource):
                 else:
                     raise ValueError("'manual_mode' must be 'enter' or 'exit'")
             elif name == "gravity_torques":
-                if self.variant == "rs":
-                    raise NotImplementedError("gravity torques are not modelled for the B601-RS yet")
                 positions = await asyncio.to_thread(self._read_positions_deg)
-                result[name] = self.manual_torques(positions)
+                if self.variant == "rs":
+                    # gravity_scale is pinned to 0 on RS, so manual_torques() would report zeros.
+                    # Serve the model's own numbers (unscaled, unclamped) so the bench check has
+                    # something to compare, and say plainly that nothing is applied.
+                    g = self.model.gravity_torques(
+                        [math.radians(d) for d in positions], self.gravity_vector, self.payload_kg
+                    )
+                    result[name] = {
+                        "torques_nm": [-t for t in g],
+                        "note": "unverified on hardware; gravity_scale is forced to 0 on RS "
+                        "until the bench check passes",
+                    }
+                else:
+                    result[name] = self.manual_torques(positions)
             else:
                 raise ValueError(f"unknown command '{name}'")
         return result

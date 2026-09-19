@@ -88,9 +88,8 @@ if len(positions) == 6:
         f"o=({ox:.3f},{oy:.3f},{oz:.3f}) theta={theta:.1f} deg"
     )
 if args.variant == "rs":
-    # No status stream here (motors are unconfigured), so RS positions come from mechPos
-    # parameter reads and report "position only (no status frame)" -- expected, and why
-    # this check works with torque off.
+    # With torque off the motors do not hold, so a hand-move shows up in the next read; the
+    # stream is on (see above) so the rows carry real status too.
     input("\nstaleness check: torque is off; move any joint by hand a little, then press Enter ... ")
     show(bus)
 
