@@ -143,63 +143,63 @@
   "triangles": {
     "base_link": {
       "original": 81816,
-      "decimated": 3062
+      "decimated": 3004
     },
     "link1": {
       "original": 31640,
-      "decimated": 3062
+      "decimated": 2998
     },
     "link2": {
       "original": 129550,
-      "decimated": 3062
+      "decimated": 2969
     },
     "link3": {
       "original": 164258,
-      "decimated": 3062
+      "decimated": 2910
     },
     "link4": {
       "original": 103580,
-      "decimated": 3062
+      "decimated": 2888
     },
     "link5": {
       "original": 80866,
-      "decimated": 3062
+      "decimated": 2918
     },
     "link6": {
       "original": 24498,
-      "decimated": 3062
+      "decimated": 3016
     },
     "gripper_end": {
       "original": 80756,
-      "decimated": 3062
+      "decimated": 2771
     },
     "gripper_left": {
       "original": 17246,
-      "decimated": 3062
+      "decimated": 3036
     },
     "gripper_right": {
       "original": 17246,
-      "decimated": 3062
+      "decimated": 3036
     }
   },
   "decimation": {
-    "base_link": "quadric",
-    "link1": "quadric",
-    "link2": "quadric",
-    "link3": "quadric",
-    "link4": "quadric",
-    "link5": "quadric",
-    "link6": "quadric",
-    "gripper_end": "quadric",
-    "gripper_left": "quadric",
-    "gripper_right": "quadric"
+    "base_link": "components",
+    "link1": "components",
+    "link2": "components",
+    "link3": "components",
+    "link4": "components",
+    "link5": "components",
+    "link6": "components",
+    "gripper_end": "components",
+    "gripper_left": "components",
+    "gripper_right": "components"
   },
   "visual_models": {
     "base_link": {
       "faces_original": 81816,
-      "faces_decimated": 10970,
+      "faces_decimated": 16782,
       "methods": {
-        "base_link": "quadric"
+        "base_link": "components"
       },
       "parts": {
         "base_link": {
@@ -208,13 +208,13 @@
           "urdf_material": "rs_base_black"
         }
       },
-      "bytes": 198068
+      "bytes": 304720
     },
     "link1": {
       "faces_original": 31640,
-      "faces_decimated": 10971,
+      "faces_decimated": 16998,
       "methods": {
-        "link1": "quadric"
+        "link1": "components"
       },
       "parts": {
         "link1": {
@@ -223,15 +223,15 @@
           "urdf_material": "rs_anodized_silver"
         }
       },
-      "bytes": 197524
+      "bytes": 306996
     },
     "link2": {
       "faces_original": 129550,
-      "faces_decimated": 12160,
+      "faces_decimated": 16478,
       "methods": {
-        "motor_2_3": "quadric",
-        "cnc2": "quadric",
-        "pla2_black": "quadric",
+        "motor_2_3": "components",
+        "cnc2": "components",
+        "pla2_black": "components",
         "pla2_green": "quadric"
       },
       "parts": {
@@ -256,17 +256,17 @@
           "urdf_material": "rs_seeed_green"
         }
       },
-      "bytes": 220780
+      "bytes": 303480
     },
     "link3": {
       "faces_original": 164658,
-      "faces_decimated": 11666,
+      "faces_decimated": 15988,
       "methods": {
-        "cnc3": "quadric",
-        "motor_4": "quadric",
-        "pla3_black_without_seeed_badge": "quadric",
-        "pla3_seeed_badge_with_counters": "quadric",
-        "pla3_seeed_wordmark_backing": "quadric",
+        "cnc3": "components",
+        "motor_4": "components",
+        "pla3_black_without_seeed_badge": "components",
+        "pla3_seeed_badge_with_counters": "components",
+        "pla3_seeed_wordmark_backing": "components",
         "pla3_green": "quadric"
       },
       "parts": {
@@ -301,14 +301,14 @@
           "urdf_material": "rs_seeed_green"
         }
       },
-      "bytes": 214100
+      "bytes": 295420
     },
     "link4": {
       "faces_original": 104034,
-      "faces_decimated": 10969,
+      "faces_decimated": 15679,
       "methods": {
-        "motor_5": "quadric",
-        "cnc4": "quadric"
+        "motor_5": "components",
+        "cnc4": "components"
       },
       "parts": {
         "motor_5": {
@@ -322,14 +322,14 @@
           "urdf_material": "rs_anodized_silver"
         }
       },
-      "bytes": 199912
+      "bytes": 287568
     },
     "link5": {
       "faces_original": 80866,
-      "faces_decimated": 11088,
+      "faces_decimated": 15459,
       "methods": {
-        "motor_6": "quadric",
-        "cnc5": "quadric",
+        "motor_6": "components",
+        "cnc5": "components",
         "pla5_green": "quadric"
       },
       "parts": {
@@ -349,13 +349,13 @@
           "urdf_material": "rs_seeed_green"
         }
       },
-      "bytes": 204276
+      "bytes": 286864
     },
     "link6": {
       "faces_original": 24498,
-      "faces_decimated": 10970,
+      "faces_decimated": 16524,
       "methods": {
-        "link6": "quadric"
+        "link6": "components"
       },
       "parts": {
         "link6": {
@@ -364,15 +364,15 @@
           "urdf_material": "rs_motor_black"
         }
       },
-      "bytes": 198048
+      "bytes": 298000
     },
     "end_link": {
       "faces_original": 80756,
-      "faces_decimated": 10968,
+      "faces_decimated": 15455,
       "methods": {
         "pla7_green": "quadric",
-        "cnc7": "quadric",
-        "motor_7": "quadric"
+        "cnc7": "components",
+        "motor_7": "components"
       },
       "parts": {
         "pla7_green": {
@@ -391,14 +391,14 @@
           "urdf_material": "rs_motor_black"
         }
       },
-      "bytes": 201892
+      "bytes": 286468
     },
     "finger_left_link": {
       "faces_original": 17246,
-      "faces_decimated": 11306,
+      "faces_decimated": 16466,
       "methods": {
-        "pla_left": "quadric",
-        "cnc_left": "quadric"
+        "pla_left": "components",
+        "cnc_left": "components"
       },
       "parts": {
         "pla_left": {
@@ -412,14 +412,14 @@
           "urdf_material": "rs_anodized_silver"
         }
       },
-      "bytes": 205292
+      "bytes": 298048
     },
     "finger_right_link": {
       "faces_original": 17246,
-      "faces_decimated": 11306,
+      "faces_decimated": 16466,
       "methods": {
-        "pla_right": "quadric",
-        "cnc_right": "quadric"
+        "pla_right": "components",
+        "cnc_right": "components"
       },
       "parts": {
         "pla_right": {
@@ -433,7 +433,7 @@
           "urdf_material": "rs_anodized_silver"
         }
       },
-      "bytes": 205300
+      "bytes": 298056
     }
   },
   "skipped_visual_meshes": []

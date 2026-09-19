@@ -45,6 +45,16 @@ DEFAULT_OUT = REPO_ROOT / "src" / "rebot_b601" / "assets"
 STL_CAP_BYTES = 150 * 1024
 GLB_CAP_BYTES = 300 * 1024
 
+# Measured on the built GLBs: a decimated, vertex-shared mesh costs about 18 bytes per
+# face once positions, normals and indices are packed. The cap loop below shrinks an
+# overshoot, so erring generous here just means using the byte budget we paid for.
+GLB_BYTES_PER_FACE = 18
+
+# The smallest triangle count a shell can be decimated to and still be a solid. Sampling
+# the RS shells: cut to 48 faces they keep 84-100% of their volume, at 32 that is 50-90%,
+# and by 8 faces it is 0-40% -- a collapsed sliver. Shells smaller than this are kept whole.
+MIN_COMPONENT_FACES = 48
+
 # The DM package names its finishes in the part filenames instead of declaring URDF
 # materials. Ordered: the first matching token wins, so the more specific names come first.
 COLOR_RULES: list[tuple[str, str]] = [
@@ -354,14 +364,75 @@ def _quadric(mesh: trimesh.Trimesh, face_count: int) -> trimesh.Trimesh:
     return out
 
 
+def components_of(mesh: trimesh.Trimesh) -> list[trimesh.Trimesh]:
+    """The mesh's disconnected shells, largest first.
+
+    merge_vertices first: STL stores three unshared vertices per triangle, so
+    without welding every triangle is its own component and quadric decimation
+    has no shared edge to collapse -- it just deletes triangles, which is how
+    the collision meshes turned into loose shards. Shells under 4 faces cannot
+    bound a volume (these packages leave hundreds of 1- and 2-triangle slivers),
+    so they are dropped rather than spent budget on.
+    """
+    mesh.merge_vertices()
+    comps = [c for c in mesh.split(only_watertight=False, repair=False) if len(c.faces) >= 4]
+    comps.sort(key=lambda c: len(c.faces), reverse=True)
+    return comps
+
+
+def _decimate_components(mesh: trimesh.Trimesh, target_faces: int) -> tuple[trimesh.Trimesh, str]:
+    """Decimate shell by shell so small parts survive instead of dissolving.
+
+    These are CAD assemblies of many closed shells (fasteners, bosses, cable
+    glands). Decimated as one mesh with a proportional face budget, a tiny shell
+    gets a share of a few triangles and collapses into loose rubble. So every
+    shell is first taken down to its viability floor, and only what is left of
+    the budget is shared out across the shells in proportion to their detail.
+    """
+    comps = components_of(mesh)
+    if len(comps) <= 1:
+        return _quadric(mesh, target_faces), "quadric"
+
+    # The floor is measured, not assumed: some shells refuse to decimate that far
+    # (fast_simplification stops once no edge collapse is valid) and a 2148-face
+    # shell that bottoms out at 1840 would otherwise blow the budget silently.
+    floors = [(c, c if len(c.faces) <= MIN_COMPONENT_FACES else _quadric(c, MIN_COMPONENT_FACES)) for c in comps]
+
+    # Largest shell first, so when the floors do not all fit (link2 has 143 shells
+    # against a 3062-face STL budget) what falls off the end is the fine detail.
+    kept: list[tuple[trimesh.Trimesh, trimesh.Trimesh]] = []
+    spent = 0
+    for c, floor in floors:
+        if spent + len(floor.faces) <= target_faces:
+            kept.append((c, floor))
+            spent += len(floor.faces)
+    if not kept:  # target under a single shell's floor: nothing sensible to keep apart
+        return _quadric(mesh, target_faces), "quadric"
+
+    surplus = target_faces - spent
+    headroom = sum(len(c.faces) - len(floor.faces) for c, floor in kept)
+    out = []
+    for c, floor in kept:
+        extra = surplus * (len(c.faces) - len(floor.faces)) // headroom if headroom else 0
+        out.append(_quadric(c, len(floor.faces) + extra) if extra else floor)
+    if len(kept) < len(comps):
+        log(f"    kept {len(kept)} of {len(comps)} shells within the {target_faces}-face budget")
+    return trimesh.util.concatenate(out), "components"
+
+
 def decimate_to_faces(mesh: trimesh.Trimesh, target_faces: int) -> tuple[trimesh.Trimesh, str]:
     """Decimate to about target_faces. Returns (mesh, method)."""
-    if len(mesh.faces) <= target_faces:
-        return mesh, "unchanged"
     try:
-        return _quadric(mesh, target_faces), "quadric"
+        if len(mesh.faces) <= target_faces:
+            out, method = mesh, "unchanged"
+        else:
+            out, method = _decimate_components(mesh, target_faces)
+        # Sweep the slivers once more: decimation sheds the odd orphan triangle of its
+        # own, and those loose shards are what the 3D view was showing.
+        comps = components_of(out)
+        return (trimesh.util.concatenate(comps) if comps else out), method
     except Exception as e:  # noqa: BLE001 - any failure means: fall back to the hull
-        log(f"  quadric decimation failed ({type(e).__name__}: {e}); using convex hull")
+        log(f"  decimation failed ({type(e).__name__}: {e}); using convex hull")
         return mesh.convex_hull, "convex_hull"
 
 
@@ -392,16 +463,13 @@ def build_glb(parts: list[tuple[str, trimesh.Trimesh, str]], link_name: str) -> 
     """parts: [(part_name, mesh_in_link_frame, hex_colour)]. Decimates jointly
     until the GLB is under GLB_CAP_BYTES. Returns (glb_bytes, report)."""
     total_faces = sum(len(m.faces) for _, m, _ in parts)
-    # Start from a face budget that comfortably fits; GLB is roughly
-    # 12 B/vertex position + 12 B/vertex normal + 12 B/face indices, and a
-    # decimated mesh has ~0.5 vertices per face -> ~24 B/face.
-    budget = min(total_faces, GLB_CAP_BYTES // 28)
+    budget = min(total_faces, GLB_CAP_BYTES // GLB_BYTES_PER_FACE)
     methods: dict[str, str] = {}
     data = b""
     for _ in range(10):
         scene = trimesh.Scene()
         for name, m, hexc in parts:
-            share = max(4, int(budget * len(m.faces) / max(total_faces, 1)))
+            share = max(MIN_COMPONENT_FACES, int(budget * len(m.faces) / max(total_faces, 1)))
             dm, method = decimate_to_faces(m, share)
             methods[name] = method
             dm = dm.copy()
@@ -417,7 +485,8 @@ def build_glb(parts: list[tuple[str, trimesh.Trimesh, str]], link_name: str) -> 
         data = scene.export(file_type="glb")
         if len(data) < GLB_CAP_BYTES:
             break
-        budget = int(budget * min(0.85, (GLB_CAP_BYTES * 0.9) / len(data)))
+        # Proportional correction, so a small overshoot costs a small trim, not 15%.
+        budget = int(budget * GLB_CAP_BYTES * 0.97 / len(data))
     faces_out = sum(len(g.faces) for g in scene.geometry.values())
     return data, {
         "faces_original": total_faces,

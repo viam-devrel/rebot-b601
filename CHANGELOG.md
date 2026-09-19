@@ -25,6 +25,18 @@
 - The RS gripper's default `speed_deg_s` is 286.5 (5 rad/s, the vendor's limit) instead of DM's 900.
 - `torque_ratio` is accepted on RS and ignored, with a warning at configure.
 
+### Fixed
+- The RS meshes no longer arrive as floating shards. `tools/build_assets.py` decimated each part as one
+  mesh, and because the source STLs store unshared vertices there was no edge to collapse, so the
+  simplifier deleted triangles instead: `rs/meshes/link2.stl` was 3062 faces in 2762 loose pieces whose
+  largest was 6 triangles. Decimation now welds vertices, works shell by shell, keeps a shell whole
+  rather than cutting it below 48 faces, and drops the source's 1- and 2-triangle slivers. link2's
+  collision mesh is now 42 shells, the largest 816 faces.
+- The GLB byte budget assumed 28 bytes per face where the real figure is about 18, so every visual model
+  stopped at ~10,970 faces and left a third of the 300 KB cap unspent. The RS visual models now carry
+  15,455-16,998 faces at 280-300 KB. The caps themselves are unchanged. DM's committed assets are
+  byte-pinned by `tests/test_dm_baseline.py` and still predate this fix; they need a deliberate rebuild.
+
 ### Not yet on RS
 - Force control: `set_force`/`get_force`, `grab_with_force` and their `torque` aliases are refused with
   an explanation. There is no torque ratio to set.

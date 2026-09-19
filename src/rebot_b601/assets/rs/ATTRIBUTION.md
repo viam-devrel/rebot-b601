@@ -36,27 +36,27 @@ attribution.
 
 | File | Size | Notes |
 |---|---:|---|
-| `meshes/base_link.stl` | 149.6 KB | decimated from meshes/shared/base_link.STL |
-| `meshes/link1.stl` | 149.6 KB | decimated from meshes/shared/link1.STL |
-| `meshes/link2.stl` | 149.6 KB | decimated from meshes/shared/link2.STL |
-| `meshes/link3.stl` | 149.6 KB | decimated from meshes/shared/link3.STL |
-| `meshes/link4.stl` | 149.6 KB | decimated from meshes/shared/link4.STL |
-| `meshes/link5.stl` | 149.6 KB | decimated from meshes/shared/link5.STL |
-| `meshes/link6.stl` | 149.6 KB | decimated from meshes/shared/link6.STL |
-| `meshes/gripper_end.stl` | 149.6 KB | decimated from meshes/shared/gripper_end.STL |
-| `meshes/gripper_left.stl` | 149.6 KB | decimated from meshes/shared/gripper_left.STL |
-| `meshes/gripper_right.stl` | 149.6 KB | decimated from meshes/shared/gripper_right.STL |
-| `models/base_link.glb` | 193.4 KB | merged 1 visual part(s) |
-| `models/link1.glb` | 192.9 KB | merged 1 visual part(s) |
-| `models/link2.glb` | 215.6 KB | merged 4 visual part(s) |
-| `models/link3.glb` | 209.1 KB | merged 6 visual part(s) |
-| `models/link4.glb` | 195.2 KB | merged 2 visual part(s) |
-| `models/link5.glb` | 199.5 KB | merged 3 visual part(s) |
-| `models/link6.glb` | 193.4 KB | merged 1 visual part(s) |
-| `models/end_link.glb` | 197.2 KB | merged 3 visual part(s) |
-| `models/finger_left_link.glb` | 200.5 KB | merged 2 visual part(s) |
-| `models/finger_right_link.glb` | 200.5 KB | merged 2 visual part(s) |
-| `primitives.json` | 9.9 KB | generated |
+| `meshes/base_link.stl` | 146.8 KB | decimated from meshes/shared/base_link.STL |
+| `meshes/link1.stl` | 146.5 KB | decimated from meshes/shared/link1.STL |
+| `meshes/link2.stl` | 145.1 KB | decimated from meshes/shared/link2.STL |
+| `meshes/link3.stl` | 142.2 KB | decimated from meshes/shared/link3.STL |
+| `meshes/link4.stl` | 141.1 KB | decimated from meshes/shared/link4.STL |
+| `meshes/link5.stl` | 142.6 KB | decimated from meshes/shared/link5.STL |
+| `meshes/link6.stl` | 147.3 KB | decimated from meshes/shared/link6.STL |
+| `meshes/gripper_end.stl` | 135.4 KB | decimated from meshes/shared/gripper_end.STL |
+| `meshes/gripper_left.stl` | 148.3 KB | decimated from meshes/shared/gripper_left.STL |
+| `meshes/gripper_right.stl` | 148.3 KB | decimated from meshes/shared/gripper_right.STL |
+| `models/base_link.glb` | 297.6 KB | merged 1 visual part(s) |
+| `models/link1.glb` | 299.8 KB | merged 1 visual part(s) |
+| `models/link2.glb` | 296.4 KB | merged 4 visual part(s) |
+| `models/link3.glb` | 288.5 KB | merged 6 visual part(s) |
+| `models/link4.glb` | 280.8 KB | merged 2 visual part(s) |
+| `models/link5.glb` | 280.1 KB | merged 3 visual part(s) |
+| `models/link6.glb` | 291.0 KB | merged 1 visual part(s) |
+| `models/end_link.glb` | 279.8 KB | merged 3 visual part(s) |
+| `models/finger_left_link.glb` | 291.1 KB | merged 2 visual part(s) |
+| `models/finger_right_link.glb` | 291.1 KB | merged 2 visual part(s) |
+| `primitives.json` | 10.0 KB | generated |
 
 ## Upstream source files used
 
