@@ -106,6 +106,22 @@ def test_end_position_units():
     print(f"zero pose: x={x:.1f} y={y:.1f} z={z:.1f} mm, o=({ox:.3f},{oy:.3f},{oz:.3f}), theta={theta:.1f} deg")
 
 
+def test_rs_bundle_is_the_vendor_chain_renamed():
+    import xml.etree.ElementTree as ET
+
+    rs = Path(__file__).parent.parent / "src" / "rebot_b601" / "rebot_b601_rs.urdf"
+    root = ET.parse(rs).getroot()
+    assert root.get("name") == "rebot_b601_rs"
+    joints = [(j.get("name"), j.get("type")) for j in root.findall("joint")]
+    assert joints == [(f"joint{i}", "revolute") for i in range(1, 7)] + [("end_joint", "fixed")]
+    links = [l.get("name") for l in root.findall("link")]
+    assert links == ["base_link", "link1", "link2", "link3", "link4", "link5", "link6", "end_link"]
+    assert root.find("link[@name='end_link']/inertial/mass").get("value") == "0.65"
+    assert root.find("joint[@name='end_joint']/origin").get("xyz") == "0 0 0.16621"
+    assert root.find("joint[@name='joint2']/limit").get("upper") == "3.14"
+    assert not root.findall(".//visual") and not root.findall(".//collision")
+
+
 if __name__ == "__main__":
     test_ov_round_trip()
     test_end_position_units()
