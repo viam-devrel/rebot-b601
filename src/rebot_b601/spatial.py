@@ -323,7 +323,8 @@ class Model:
         self.effort_nm = [j.effort for j in self.revolute]
         self.link_order, self.link_inertials = _load_links(urdf_path)
         self.end_link = self.link_order[-1]
-        # every link but the mount; the mount's geometry belongs to the gripper component
+        # every link but the mount plate; the mount plate's geometry belongs to the gripper
+        # component
         self.arm_links = self.link_order[:-1]
         # Where a tool bolts on, and the frame the arm serves as its end effector. The URDF
         # runs one fixed joint further, to the mount plate (end_link), which stays in the

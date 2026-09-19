@@ -13,7 +13,7 @@
   no clamping, so the fully open angle can be read off against the jaws' hard stop. That reading is
   `open_position_deg`.
 - RS finger meshes, GLBs and collision boxes, so the RS gripper serves a real one-DoF kinematic model
-  (`get_kinematics`, `get_geometries`, `Get3DModels`) and `include_gripper_geometry` shows fingers on RS.
+  (`get_kinematics`, `get_geometries`, `Get3DModels`).
 
 ### Changed
 - The gripper takes a `variant` attribute and refuses a port already open for the other vendor's motors.
@@ -24,6 +24,28 @@
   velocity is not a measurement; a resting motor reads -0.15 rad/s). `stall_polls` counts either.
 - The RS gripper's default `speed_deg_s` is 286.5 (5 rad/s, the vendor's limit) instead of DM's 900.
 - `torque_ratio` is accepted on RS and ignored, with a warning at configure.
+- The arm's served kinematic model ends at the tool mount, `link6`, where a tool bolts on. It used to
+  run one fixed joint further, to the mount plate (`end_link`), which sits 155 mm (DM) / 166 mm (RS)
+  past `link6`, beyond any hardware. The mount plate stays in the bundled URDF for its mass and its
+  collision asset, and is no longer served.
+- The end pose `get_end_position` reports, and that motion-service targets are expressed in, is the
+  tool mount. It moves back 155 mm (DM) / 166 mm (RS) **and rotates**: at the zero pose DM reads
+  x 104.9, z 191.7 mm and RS x 135.5, z 217.7 mm, both with orientation vector (1, 0, 0) and theta
+  -180, where the mount plate read (0, 0, 1) and theta 0. The tool mount follows the +Z-as-approach-axis
+  convention and the mount plate did not, so an existing pose target has to be re-expressed, not merely
+  shifted, and taught poses have to be recaptured.
+- The gripper's served model starts at the arm's tool mount and carries the offset to the gripper body
+  itself. Gripper frame config is unchanged: parent `arm`, zero translation.
+- The app's 3D view no longer shows the gripper. Its visual models were only ever served through
+  `include_gripper_geometry`; the gripper's shape is still available through the gripper component's
+  own geometries.
+
+### Removed
+- `include_gripper_geometry`. It could not survive the trim: the RDK keeps only the first `<collision>`
+  per link and `link6` already has its own, so the gripper geometry would have been discarded with no
+  warning. A config that still carries the attribute is ignored, with a warning at configure. A tool
+  with no gripper component of its own is now described by a `geometry` in the arm's frame config,
+  which is the idiomatic Viam answer.
 
 ### Fixed
 - The RS meshes no longer arrive as floating shards. `tools/build_assets.py` decimated each part as one

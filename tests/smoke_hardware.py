@@ -149,7 +149,7 @@ positions = show(bus)
 if len(positions) == 6:
     x, y, z, ox, oy, oz, theta = spatial.MODELS[args.variant].end_position(positions)
     print(
-        f"\nend mount (FK, {args.variant}): x={x:.1f} y={y:.1f} z={z:.1f} mm  "
+        f"\ntool mount (FK, {args.variant}): x={x:.1f} y={y:.1f} z={z:.1f} mm  "
         f"o=({ox:.3f},{oy:.3f},{oz:.3f}) theta={theta:.1f} deg"
     )
 if args.variant == "rs":

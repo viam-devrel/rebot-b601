@@ -49,7 +49,9 @@ On the DM arm both components share one serial connection; the module multiplexe
 }
 ```
 
-The gripper's frame origin is the arm's end link (the gripper mount), so a zero translation is correct. The arm's kinematics stop at the mount; the gripper component supplies the gripper body and finger geometry.
+The arm's model ends at the tool mount, `link6`, where a tool bolts on. The gripper's model starts
+there and carries the offset to the gripper body itself, so the gripper's frame config stays parent
+`arm` with zero translation. The gripper component supplies the gripper body and finger geometry.
 
 B601-RS arm on a CAN interface:
 
@@ -83,10 +85,10 @@ meshes, and per-link GLB visuals. `get_end_position`, `get_kinematics`, `get_geo
 and motion-service `move_to_position` all describe the RS arm. The RS URDF comes from Seeed's
 [`reBotArm_control_py`](https://github.com/Seeed-Projects/reBotArm_control_py) repository,
 `urdf/RS/urdf/ReBot_Arm_RS.urdf` at commit `76512eab38ba54f11830e7cdfcba68e11629f902`, with Seeed's
-`gripper_end`/`j_gripper_end` renamed `end_link`/`end_joint` so the mount frame is named as on DM. Both
-mount frames sit ahead of the hardware: DM's at the finger plane, 155 mm from link6; RS's 166 mm from
-link6, about 73 mm past the front of the RS gripper body. At zero the RS end mount is at x 301.7,
-z 217.7 mm. The RS arm rests in the same folded posture as DM, with positive joint 2/3 angles where DM
+`gripper_end`/`j_gripper_end` renamed `end_link`/`end_joint` so the mount plate is named as on DM. Both
+mount plates sit ahead of the hardware: DM's at the finger plane, 155 mm from link6; RS's 166 mm from
+link6, about 73 mm past the front of the RS gripper body. The served chain stops short of them, at the
+tool mount, so at zero the RS arm reports x 135.5, z 217.7 mm. The RS arm rests in the same folded posture as DM, with positive joint 2/3 angles where DM
 uses negative.
 
 Not on RS yet: discovery finds DM boards only. Manual mode is damping only until gravity
@@ -117,7 +119,6 @@ that is licensed that way and is the DM source. Confirm this with Seeed before a
 | `tolerance_deg` | number | `2.0` | Settle tolerance for blocking moves |
 | `motion` | string | unset | Name of a motion service (usually `"builtin"`) used by `move_to_position` |
 | `collision_geometry` | string | `"primitives"` | Collision bodies in the served URDF: `"primitives"` (one box per link), `"meshes"` (decimated vendor STLs), or `"none"` |
-| `include_gripper_geometry` | bool | `false` | Attach the gripper body box to `end_link` (DM: the `gripper_base` asset; RS: the `gripper_end` body). Leave off when the gripper component is configured, or the two will self-collide |
 | `torque_limit_nm` | number or [6] | unset | Software collision stop: abort and hold when a joint's measured torque exceeds this for `torque_trip_polls` consecutive polls. Works on RS: a holding joint reports 1–2 Nm; torque reads 0 only while the motor is unpowered or known by position alone |
 | `torque_trip_polls` | int | `3` | Consecutive over-limit polls (at 10 Hz) that count as a collision |
 | `temperature_warn_c` | number | `60` | Log a warning when a motor is at or above this temperature |
@@ -130,6 +131,9 @@ that is licensed that way and is the DM source. Confirm this with Seeed before a
 | `gravity_scale` | number | `1.0` | Scale of the gravity-compensation feed-forward in manual mode (`0` disables it). Ignored on RS: forced to 0 until the RS mass model is verified on the bench |
 | `payload_kg` | number | `0` | Extra mass at the end link for gravity compensation |
 | `gravity_vector` | [3] | `[0, 0, -9.81]` | Gravity in the arm's base frame, for non-upright mounts |
+
+The arm's model carries no tool geometry: a tool with no gripper component of its own is described by a
+`geometry` in the arm's frame config.
 
 ### Gripper attributes
 
@@ -343,7 +347,8 @@ DYLD_LIBRARY_PATH=/usr/local/lib .venv/bin/python tests/smoke_hardware.py --vari
 DYLD_LIBRARY_PATH=/usr/local/lib .venv/bin/python tests/smoke_hardware.py --variant rs --port can0 --gravity-check   # torque on, holds; measured vs model torque per joint (stop viam-server first)
 ```
 
-The smoke script prints FK for the variant it ran against (`end mount (FK, <variant>)`). The RS read-only
+The smoke script prints the tool mount's FK pose for the variant it ran against
+(`tool mount (FK, <variant>)`). The RS read-only
 run is interactive: it pauses once for a staleness check (move a joint by hand, then press
 Enter) before reading the joints again. `--move` enables torque and moves the arm; the arm refuses with its
 own fault message (undervoltage, for example) if any motor reports a fault. Flag abbreviations are disabled,

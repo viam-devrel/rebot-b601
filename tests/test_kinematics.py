@@ -188,6 +188,9 @@ def test_the_jaw_did_not_move_in_space(model):
         [float(v) for v in o.get("xyz").split()],
     )
     composed = spatial._mat_mul(mount_t, served)
+    # abs=1e-9 holds only because both URDFs' end_joint origins fit in _fmt's six significant
+    # digits; a vendor re-pin with more precise values makes the served origin lossy and trips
+    # this, as a formatting loss rather than a floating-point one.
     for r in range(3):
         for c in range(4):
             assert composed[r][c] == pytest.approx(plate[r][c], abs=1e-9), (model.name, r, c)
