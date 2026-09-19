@@ -48,6 +48,12 @@ ap.add_argument(
     help="read-only: enable torque so the arm holds, then compare measured holding torque with "
     "the model's gravity torque per joint (stop viam-server first; the CAN channel cannot be shared)",
 )
+ap.add_argument(
+    "--gripper",
+    action="store_true",
+    help="MOVES THE GRIPPER: jog motor 0x07 by a step you type and print its position, to find "
+    "open_position_deg (stop viam-server first; the CAN channel cannot be shared)",
+)
 args = ap.parse_args()
 
 port = args.port
@@ -80,6 +86,44 @@ def show(bus) -> list:
     return positions
 
 
+def jog_gripper():
+    """Type a signed step in motor degrees, Enter to repeat, 'q' to stop. Nothing is clamped:
+    this is how open_position_deg is discovered, so the jaws' own hard stop is the limit."""
+    from motorbridge import Mode  # deferred like the other hardware imports below
+
+    motor = bus.motor(7)
+    motor.enable()
+    motor.ensure_mode(Mode.POS_VEL if vendor == "robstride" else Mode.FORCE_POS)
+    step = 10.0
+    start = bus.poll_feedback([7])[7]
+    if start is None:
+        print("no feedback from gripper motor 0x07; check power and wiring")
+        return
+    target = math.degrees(start.pos)
+    print(f"gripper at {target:.2f} deg; positive/negative steps, 'q' to quit")
+    while True:
+        raw = input(f"step [{step:+.1f}] > ").strip()
+        if raw.lower() == "q":
+            break
+        if raw:
+            try:
+                step = float(raw)
+            except ValueError:
+                print("  not a number")
+                continue
+        target += step
+        with bus.lock:
+            if vendor == "robstride":
+                motor.send_pos_vel(math.radians(target), math.radians(90.0))
+            else:
+                motor.send_force_pos(math.radians(target), math.radians(90.0), 0.07)
+        time.sleep(0.5)
+        state = bus.poll_feedback([7], positions_only=False)[7]
+        actual = math.degrees(state.pos) if state is not None else float("nan")
+        print(f"  target {target:8.2f}  actual {actual:8.2f} deg")
+    print(f"\nrecord this as open_position_deg once the jaws are fully open: {target:.1f}")
+
+
 print(f"connecting to {port} ({args.variant}, {vendor}) ...")
 try:
     bus = SharedBus.acquire(port, vendor=vendor)
@@ -104,6 +148,12 @@ if args.variant == "rs":
     # stream is on (see above) so the rows carry real status too.
     input("\nstaleness check: torque is off; move any joint by hand a little, then press Enter ... ")
     show(bus)
+
+if args.gripper:
+    input("\nthe gripper motor will be enabled and jogged. Enter to continue, Ctrl-C to abort ... ")
+    jog_gripper()
+    bus.release()
+    sys.exit(0)
 
 if not (args.move or args.gravity_check):
     bus.release()
