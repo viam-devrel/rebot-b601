@@ -97,6 +97,18 @@
   `get_geometries` is unchanged and still reports all three parts at their real sizes; the served
   model is deliberately the coarser of the two. `tests/test_dm_baseline.py` re-pins the three DM
   gripper payload hashes; the arm payloads, the mesh bytes and the GLBs did not move.
+- The gripper component's frame in world is aligned with the arm's. Every joint of the served gripper
+  model carried its vendor rotation -- `tool_mount_joint` the mount plate's rpy, the finger joint the
+  finger's -- so each link frame sat at some arbitrary angle to the mount it hangs from: at the zero
+  pose the arm's tool mount read `(1, 0, 0) th -180` while `gripper_base` read `(0, 0, 1) th 0` and the
+  RS leaf `finger_left_link` read `(0, -1, 0) th -180`, matching neither the arm nor each other. Since
+  viam-server reports the component at its model's leaf frame, the gripper's pose and any motion
+  request against it were expressed in a frame nothing else shared. Both joints are pure translations
+  now (the same shape SO-101's gripper model uses), and the accumulated vendor rotation rides on each
+  link's `<collision origin rpy>` instead, so both frames read the arm's tool mount, `+z` stays the
+  approach axis, and every collision box and the finger's travel are unmoved -- verified box by box in
+  `tests/test_kinematics.py::test_gripper_boxes_did_not_move_in_space`. The three DM gripper payload
+  hashes are re-pinned again; the gripper mesh bytes, the arm payloads and the GLBs did not move.
 - The RS jaw no longer lurches when the resource starts or restarts. Configure enabled the motor and
   set the mode but never commanded a target, and a RobStride in profile position resumes its last
   internal setpoint, which after a restart is stale. It now reads the jaw position before enabling and

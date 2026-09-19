@@ -10,9 +10,43 @@ DM, RS = spatial.MODELS["dm"], spatial.MODELS["rs"]
 BOTH = [pytest.param(DM, id="dm"), pytest.param(RS, id="rs")]
 
 
+_I3 = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+
 def _links_with_collision(urdf: bytes):
     root = ET.fromstring(urdf)
     return {l.get("name") for l in root.findall("link") if l.find("collision") is not None}
+
+
+def _walk_gripper(urdf: bytes, travel: float):
+    """Walk the served gripper chain from tool_mount: (link frames, collision-body frames),
+    both as 4x4 transforms in the tool mount's frame, with the finger slid by ``travel``."""
+    root = ET.fromstring(urdf)
+    joints = {j.find("parent").get("link"): j for j in root.findall("joint")}
+    links = {l.get("name"): l for l in root.findall("link")}
+    ident = spatial._transform(_I3, [0, 0, 0])
+
+    def origin(el):
+        if el is None:
+            return ident
+        xyz = [float(v) for v in (el.get("xyz") or "0 0 0").split()]
+        rpy = [float(v) for v in (el.get("rpy") or "0 0 0").split()]
+        return spatial._transform(spatial._rot_rpy(*rpy), xyz)
+
+    frames, bodies, name, t = {}, {}, "tool_mount", ident
+    while True:
+        frames[name] = t
+        col = links[name].find("collision")
+        if col is not None:
+            bodies[name] = spatial._mat_mul(t, origin(col.find("origin")))
+        joint = joints.get(name)
+        if joint is None:
+            return frames, bodies
+        t = spatial._mat_mul(t, origin(joint.find("origin")))
+        if joint.get("type") == "prismatic":
+            axis = [float(v) for v in joint.find("axis").get("xyz").split()]
+            t = spatial._mat_mul(t, spatial._transform(_I3, [a * travel for a in axis]))
+        name = joint.find("child").get("link")
 
 
 @pytest.mark.parametrize("model", BOTH)
@@ -127,8 +161,18 @@ def test_gripper_base_carries_the_right_finger_envelope(model):
     root = ET.fromstring(kinematics.gripper_kinematics(model, "primitives")[1])
     base_link = root.find("link[@name='gripper_base']")
     assert len(base_link.findall("collision")) == 1
-    center = [float(v) for v in base_link.find("collision/origin").get("xyz").split()]
     size = [float(v) for v in base_link.find("collision/geometry/box").get("size").split()]
+    # gripper_base's frame now keeps the tool mount's axes, so the box carries the mount plate's
+    # rotation on its own origin. Undo it to compare against the plate-frame primitives.
+    mount_rpy = model.chain[-1].rpy
+    assert [float(v) for v in base_link.find("collision/origin").get("rpy").split()] == pytest.approx(mount_rpy)
+    mount = spatial._rot_rpy(*mount_rpy)
+    center = list(
+        spatial.rotate(
+            [[mount[j][i] for j in range(3)] for i in range(3)],
+            [float(v) for v in base_link.find("collision/origin").get("xyz").split()],
+        )
+    )
 
     g = model.gripper
     body = model.primitives[model.mount_asset_key]
@@ -155,8 +199,13 @@ def test_rs_gripper_fingers_are_set_back_from_the_mount():
     rs = spatial.MODELS["rs"]
     root = ET.fromstring(kinematics.gripper_kinematics(rs, "primitives")[1])
     origin = root.find("joint[@name='finger_left']/origin")
-    assert float(origin.get("xyz").split()[0]) == pytest.approx(-0.041939)
-    assert origin.get("rpy").split()[0] == "1.5708"
+    xyz = [float(v) for v in origin.get("xyz").split()]
+    # The vendor's 41.939 mm setback, rotated into the tool mount's frame: it runs back along
+    # the approach axis there, not along the finger frame's own -x.
+    assert math.dist((0, 0, 0), xyz) == pytest.approx(0.041939, abs=1e-6)
+    assert xyz[2] == pytest.approx(-0.041939, abs=1e-6)
+    # Translation only. The vendor rpy rides on the finger's collision body instead.
+    assert origin.get("rpy") == "0 0 0"
 
 
 @pytest.mark.parametrize("model", BOTH)
@@ -213,28 +262,55 @@ def test_gripper_model_roots_at_the_tool_mount(model):
     assert mount.find("child").get("link") == "gripper_base"
     xyz = [float(v) for v in mount.find("origin").get("xyz").split()]
     assert xyz == pytest.approx([0.0, 0.0, {"dm": 0.15539, "rs": 0.16621}[model.name]])
+    # Pure translation along the approach axis: the mount plate's rpy rides on the box instead.
+    assert mount.find("origin").get("rpy") == "0 0 0"
+
+
+@pytest.mark.parametrize("travel", [0.0, 0.02])
+@pytest.mark.parametrize("model", BOTH)
+def test_gripper_boxes_did_not_move_in_space(model, travel):
+    """The frame refactor moved every vendor rotation off the joints and onto the collision
+    origins. Each body must still land exactly where the vendor chain -- the arm's end_joint,
+    then the finger joint, then the slide along the finger's own axis -- puts it. This is the
+    assertion that makes the refactor safe: break it and the planner's idea of where the jaw is
+    drifts quietly off the metal while every other gripper test stays green.
+    """
+    _, bodies = _walk_gripper(kinematics.gripper_kinematics(model, "primitives")[1], travel)
+    g = model.gripper
+    mj = model.chain[-1]
+    mount = spatial._transform(spatial._rot_rpy(*mj.rpy), list(mj.xyz))
+    lxyz, lrpy = g.left_origin
+    finger = spatial._mat_mul(mount, spatial._transform(spatial._rot_rpy(*lrpy), list(lxyz)))
+    finger = spatial._mat_mul(finger, spatial._transform(_I3, [a * travel for a in g.axis]))
+    want = {
+        "gripper_base": (mount, kinematics.gripper_base_box(model)[0]),
+        "finger_left_link": (finger, model.primitives[g.left_key]["center"]),
+    }
+    assert set(bodies) == set(want)
+    for link, (frame, center) in want.items():
+        expected = spatial._mat_mul(frame, spatial._transform(_I3, list(center)))
+        for r in range(3):
+            # Slack is _fmt's six significant digits on the accumulated rpy -- finer than the
+            # five-digit angles the vendor URDFs themselves carry -- not a real displacement.
+            assert expected[r][3] == pytest.approx(bodies[link][r][3], abs=1e-7), (link, r)
+            for c in range(3):
+                assert expected[r][c] == pytest.approx(bodies[link][r][c], abs=1e-5), (link, r, c)
 
 
 @pytest.mark.parametrize("model", BOTH)
-def test_the_jaw_did_not_move_in_space(model):
-    """Round trip through the SERVED gripper URDF: the arm's tool mount composed with the
-    mount joint the gripper actually publishes must land on the mount plate, and the reported
-    body box must land where that transform puts it. The second half is what fails if the
-    composition order is reversed; the first half pins the published transform to the URDF."""
-    ts = model.link_transforms([0.0] * 6)
-    mount_t, plate = ts[model.link_order.index(model.tool_mount_link)], ts[-1]
-    o = ET.fromstring(kinematics.gripper_kinematics(model, "none")[1]).find("joint[@name='tool_mount_joint']/origin")
-    served = spatial._transform(
-        spatial._rot_rpy(*[float(v) for v in o.get("rpy").split()]),
-        [float(v) for v in o.get("xyz").split()],
-    )
-    composed = spatial._mat_mul(mount_t, served)
-    # abs=1e-9 holds only because both URDFs' end_joint origins fit in _fmt's six significant
-    # digits; a vendor re-pin with more precise values makes the served origin lossy and trips
-    # this, as a formatting loss rather than a floating-point one.
-    for r in range(3):
-        for c in range(4):
-            assert composed[r][c] == pytest.approx(plate[r][c], abs=1e-9), (model.name, r, c)
-    want = spatial.apply(served, model.primitives[model.mount_asset_key]["center"])
-    got = kinematics.gripper_geometries(model, 0.0)[0].center
-    assert (got.x, got.y, got.z) == pytest.approx([v * 1000 for v in want], abs=1e-6)
+def test_gripper_link_frames_keep_the_tool_mount_axes(model):
+    """viam-server reports the gripper component at its model's leaf frame, so link frames that
+    carry the vendor rotations make the component's orientation in world unrelated to the arm's
+    (it read (0,0,1) th 0 at the base and (0,-1,0) th -180 at the RS leaf). Every joint is a
+    pure translation now, so both frames read exactly what the arm's tool mount reads.
+    """
+    arm = model.end_position([0.0] * 6)
+    assert arm[3:6] == pytest.approx((1.0, 0.0, 0.0), abs=1e-4)
+    # -179.9996, and +/-180 is where the orientation vector's theta wraps: compare magnitudes.
+    assert abs(arm[6]) == pytest.approx(180.0, abs=1e-3)
+    mount_t = model.link_transforms([0.0] * 6)[model.link_order.index(model.tool_mount_link)]
+    frames, _ = _walk_gripper(kinematics.gripper_kinematics(model, "primitives")[1], 0.0)
+    for name in ("gripper_base", "finger_left_link"):
+        pose = spatial.transform_to_viam_pose(spatial._mat_mul(mount_t, frames[name]))
+        assert pose[3:6] == pytest.approx(arm[3:6], abs=1e-6), name
+        assert abs(pose[6]) == pytest.approx(abs(arm[6]), abs=1e-3), name

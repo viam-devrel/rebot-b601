@@ -43,6 +43,15 @@ def _rot_rpy(roll, pitch, yaw):
     return _mat_mul(rz, _mat_mul(ry, rx))
 
 
+def rpy_from_rot(r):
+    """Inverse of ``_rot_rpy``: the URDF fixed-axis (roll, pitch, yaw) of a rotation matrix."""
+    sp = max(-1.0, min(1.0, -r[2][0]))
+    cp = math.hypot(r[0][0], r[1][0])
+    if cp < 1e-12:  # pitch at +/-90: only roll -/+ yaw is determined, so pin yaw at 0
+        return (math.atan2(sp * r[0][1], sp * r[0][2]), math.asin(sp), 0.0)
+    return (math.atan2(r[2][1], r[2][2]), math.atan2(sp, cp), math.atan2(r[1][0], r[0][0]))
+
+
 def _rot_axis_angle(axis, angle):
     x, y, z = axis
     n = math.sqrt(x * x + y * y + z * z)
@@ -246,7 +255,7 @@ def apply(t, p):
 
 
 def rotate(t, v):
-    """Apply only the rotation part of a 4x4 transform to a 3-vector."""
+    """Apply only the rotation part of a 4x4 transform (or a bare 3x3 rotation) to a 3-vector."""
     return (
         t[0][0] * v[0] + t[0][1] * v[1] + t[0][2] * v[2],
         t[1][0] * v[0] + t[1][1] * v[1] + t[1][2] * v[2],

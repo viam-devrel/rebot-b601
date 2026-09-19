@@ -28,6 +28,14 @@ carries that union box in every mode (a mesh cannot also cover the right finger)
 serves only the left finger's STL. The surviving mesh's bytes did not change, and neither did the
 arm payloads or the GLBs.
 
+The three gripper payload hashes moved a third time when the gripper's link frames were
+squared up with the arm's. Every joint in the model now carries translation only and each
+vendor rotation -- the mount plate's, then the finger's -- rides on its link's <collision
+origin rpy> instead, so the boxes sit exactly where they did (to within _fmt's six significant
+digits) while gripper_base and finger_left_link finally report the tool mount's orientation
+rather than an arbitrary one. Only the URDF text changed: GRIPPER_MESH_SHAS, the arm payloads,
+MESH_SHAS and GLB_SIZES all held.
+
 Note the two naming conventions: mesh keys are gripper_base/left_finger/right_finger while
 geometry labels are gripper_base/finger_left_link/finger_right_link."""
 
@@ -52,9 +60,9 @@ MESH_SHAS = {  # meshes/<link>.stl -> sha256 of the bytes served in meshes mode
     "meshes/link5.stl": "07baaabd37acf17b3441fddabf8a50d71039bd66cff9110c2ba72844f6234149",
     "meshes/link6.stl": "ef30182a5d6117990641d8cf72b20256ca419a23e28e0af3565573448488b4b7",
 }
-GRIPPER_PRIMITIVES_SHA = "ee615edf92b23de569cdd125bdeb09cf890839148b57fafa8eb3fb9d610719fe"
-GRIPPER_NONE_SHA = "5fa225dbe789dbf6b6dc80a3d2e21bfdd3b85179c218a230abdc2a11600e22db"
-GRIPPER_MESHES_URDF_SHA = "997ed89b2779854b3ee89ef5ea2e07f66820670af7471e56374008d71cf98e4b"
+GRIPPER_PRIMITIVES_SHA = "05a6c13859d24a684f7eaea35f73bea6c2e1e5e94c6ffa24b90f8c64a8bcfacb"
+GRIPPER_NONE_SHA = "1e7db0c6ac4016b3fd83f413ce6a50f7b7a5ecbc683ad39b29e36e08581024a8"
+GRIPPER_MESHES_URDF_SHA = "09ec8c76ba33f87f0580189c39c82f93399779d9f799a61a67345f76cc90cd04"
 GRIPPER_MESH_SHAS = {  # meshes/<part>.stl -> sha256 of the bytes served in meshes mode
     "meshes/left_finger.stl": "d24a8c610c8f342f9aa4a528416f52e5a291c90e52c8d6c0a032cbd804430557",
 }

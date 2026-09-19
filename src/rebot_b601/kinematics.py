@@ -36,17 +36,19 @@ def _fmt(values: Sequence[float]) -> str:
     return " ".join(f"{v:.6g}" for v in values)
 
 
-def _collision_box(center: Sequence[float], size: Sequence[float]) -> ET.Element:
+def _collision_box(
+    center: Sequence[float], size: Sequence[float], rpy: Sequence[float] = (0.0, 0.0, 0.0)
+) -> ET.Element:
     col = ET.Element("collision")
-    ET.SubElement(col, "origin", xyz=_fmt(center), rpy="0 0 0")
+    ET.SubElement(col, "origin", xyz=_fmt(center), rpy=_fmt(rpy))
     geom = ET.SubElement(col, "geometry")
     ET.SubElement(geom, "box", size=_fmt(size))
     return col
 
 
-def _collision_mesh(filename: str) -> ET.Element:
+def _collision_mesh(filename: str, rpy: Sequence[float] = (0.0, 0.0, 0.0)) -> ET.Element:
     col = ET.Element("collision")
-    ET.SubElement(col, "origin", xyz="0 0 0", rpy="0 0 0")
+    ET.SubElement(col, "origin", xyz="0 0 0", rpy=_fmt(rpy))
     geom = ET.SubElement(col, "geometry")
     ET.SubElement(geom, "mesh", filename=filename)
     return col
@@ -182,8 +184,9 @@ def _box_corners(center: Sequence[float], size: Sequence[float], transform=None)
 
 
 def gripper_base_box(model: spatial.Model) -> Optional[Tuple[List[float], List[float]]]:
-    """gripper_base's single collision body: the axis-aligned union, in gripper_base's frame,
-    of the body box and the right finger's static travel envelope.
+    """gripper_base's single collision body: the axis-aligned union, in the vendor mount-plate
+    frame the primitives are authored in, of the body box and the right finger's static travel
+    envelope. ``gripper_urdf`` rotates it into gripper_base's frame.
 
     The served model has to be one chain with exactly one leaf, because viam-server's URDF
     parser (``referenceframe.ParseConfig``) rejects a model with more than one end effector,
@@ -214,6 +217,12 @@ def gripper_urdf(model: spatial.Model, mode: str = "primitives") -> Tuple[bytes,
     arm's tool mount, which is where the served arm chain ends, so configure the gripper with
     the arm as frame parent and zero translation.
 
+    Every joint here carries translation only, so gripper_base and finger_left_link keep the
+    tool mount's axes and the component's pose in world means something next to the arm's. The
+    vendor rotations -- the mount plate's, then the finger's -- do not vanish: each accumulates
+    into its link's ``<collision origin rpy>``, which leaves every box exactly where it was
+    (``test_gripper_boxes_did_not_move_in_space``). Same trick as SO-101's gripper model.
+
     The left finger is the model's only leaf and gripper_base carries the right finger's
     travel envelope (see ``gripper_base_box``), so the served model is coarser than the
     geometries ``gripper_geometries`` reports. That asymmetry is deliberate: the model must
@@ -223,27 +232,33 @@ def gripper_urdf(model: spatial.Model, mode: str = "primitives") -> Tuple[bytes,
     meshes: Dict[str, Mesh] = {}
     g = model.gripper
 
-    def add_link(name: str, asset: str):
+    def add_link(name: str, asset: str, rot, rpy: Sequence[float]):
         link = ET.SubElement(robot, "link", name=name)
         if mode == "none":
             return
         data = _read_mesh(model, asset) if mode == "meshes" else None
         if data is not None:
             filename = _mesh_filename(asset)
-            link.append(_collision_mesh(filename))
+            link.append(_collision_mesh(filename, rpy))
             meshes[filename] = Mesh(content_type=_STL_CONTENT_TYPE, mesh=data)
             return
         prim = model.primitives.get(asset)
         if prim:
-            link.append(_collision_box(prim["center"], prim["size"]))
+            link.append(_collision_box(spatial.rotate(rot, prim["center"]), prim["size"], rpy))
 
     mount_joint = model.chain[-1]  # end_joint: the tool mount -> mount plate transform
-    # The gripper's model starts where the arm's ends. This fixed joint carries that
-    # transform, so gripper_base and everything under it stay in the mount plate frame
-    # their primitives are authored in.
+    mount_rot = spatial._rot_rpy(*mount_joint.rpy)
+    # The vendor rpy of the finger joint, folded into the mount's: the rotation of the finger's
+    # own frame relative to the tool mount, which is what its collision body has to carry.
+    (lxyz, lrpy) = g.left_origin
+    finger_rot = spatial._mat_mul(mount_rot, spatial._rot_rpy(*lrpy))
+    finger_rpy = spatial.rpy_from_rot(finger_rot)
+
+    # The gripper's model starts where the arm's ends. This fixed joint carries the mount
+    # plate's offset along the approach axis; its rotation stays out of the chain.
     ET.SubElement(robot, "link", name="tool_mount")
     j = ET.SubElement(robot, "joint", name="tool_mount_joint", type="fixed")
-    ET.SubElement(j, "origin", xyz=_fmt(mount_joint.xyz), rpy=_fmt(mount_joint.rpy))
+    ET.SubElement(j, "origin", xyz=_fmt(mount_joint.xyz), rpy="0 0 0")
     ET.SubElement(j, "parent", link="tool_mount")
     ET.SubElement(j, "child", link="gripper_base")
 
@@ -252,15 +267,16 @@ def gripper_urdf(model: spatial.Model, mode: str = "primitives") -> Tuple[bytes,
     base = ET.SubElement(robot, "link", name="gripper_base")
     box = gripper_base_box(model) if mode != "none" else None
     if box:
-        base.append(_collision_box(*box))
-    add_link("finger_left_link", g.left_key)
+        center, size = box
+        base.append(_collision_box(spatial.rotate(mount_rot, center), size, mount_joint.rpy))
+    add_link("finger_left_link", g.left_key, finger_rot, finger_rpy)
 
-    (lxyz, lrpy) = g.left_origin
     j = ET.SubElement(robot, "joint", name="finger_left", type="prismatic")
-    ET.SubElement(j, "origin", xyz=_fmt(lxyz), rpy=_fmt(lrpy))
+    # Offset and travel axis expressed in the tool mount's frame, the frame both links now use.
+    ET.SubElement(j, "origin", xyz=_fmt(spatial.rotate(mount_rot, lxyz)), rpy="0 0 0")
     ET.SubElement(j, "parent", link="gripper_base")
     ET.SubElement(j, "child", link="finger_left_link")
-    ET.SubElement(j, "axis", xyz=_fmt(g.axis))
+    ET.SubElement(j, "axis", xyz=_fmt(spatial.rotate(finger_rot, g.axis)))
     ET.SubElement(j, "limit", lower="0", upper=f"{g.travel_m}", effort="8", velocity="0.08")
 
     tree = ET.ElementTree(robot)

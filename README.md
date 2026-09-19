@@ -343,6 +343,11 @@ collision boxes, meshes and GLBs; the arm picks the model from `variant`.
 - The gripper serves a one-DoF URDF: `tool_mount` -> `gripper_base` -> `finger_left_link` on a
   prismatic joint. Its kinematic input is the left finger's travel in metres, 0 (closed) to the
   variant's travel when open: 0.05 on DM, 0.0715 on RS.
+  Every joint in that model carries translation only, so `gripper_base` and `finger_left_link` keep
+  the arm's tool-mount axes and the pose viam-server reports for the gripper component is the arm's
+  frame, not an arbitrary vendor one -- `+z` is still the approach axis. The vendor rotations (the
+  mount plate's, then the finger's) are not lost: each rides on its link's `<collision origin rpy>`,
+  so every box sits exactly where it did.
   The model is a single chain with `finger_left_link` as its only leaf, because viam-server rejects
   a URDF model with more than one end effector. The right finger therefore is not a link of its own:
   the envelope covering its full travel is unioned into `gripper_base`'s box, which is why that box
