@@ -155,7 +155,7 @@ def arm_3d_models(model: spatial.Model, include_gripper: bool = False) -> Dict[s
     models: Dict[str, Mesh] = {}
     names = list(model.arm_links)
     if include_gripper:
-        # DM gripper GLBs; absent under assets/rs and skipped
+        # finger GLBs exist only for DM; on RS the mount body is served and the fingers are skipped
         names += [model.end_link, "finger_left_link", "finger_right_link"]
     for name in names:
         path = model.assets_dir / "models" / f"{name}.glb"

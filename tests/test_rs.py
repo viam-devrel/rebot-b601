@@ -409,3 +409,4 @@ async def test_rs_geometries_follow_the_rs_model(factory):
     geos = await rs.get_geometries()
     assert [g.label for g in geos] == rs.model.arm_links
     assert geos[2].center.x < 0  # link2's box sits behind the base at the rest pose (upper arm points back)
+    assert geos[2].box.dims_mm.x == pytest.approx(326.53, abs=0.1)  # the RS link2 box; DM's is ~321

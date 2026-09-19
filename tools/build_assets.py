@@ -6,7 +6,8 @@ pinned commit and writes, under src/rebot_b601/assets/<variant subdir>/:
 
   meshes/<link>.stl     decimated binary STL collision mesh per link (< 150 KB)
   models/<link>.glb     per-link visual GLB, URDF <visual> parts merged, flat
-                        per-part colours guessed from the part filename (< 300 KB)
+                        per-part colours from the URDF material, or guessed from
+                        the part filename for packages without materials (< 300 KB)
   primitives.json       axis-aligned bounding box of the ORIGINAL collision
                         mesh per link, in the link frame, metres; plus
                         triangle counts and provenance
@@ -44,6 +45,22 @@ DEFAULT_OUT = REPO_ROOT / "src" / "rebot_b601" / "assets"
 STL_CAP_BYTES = 150 * 1024
 GLB_CAP_BYTES = 300 * 1024
 
+# The DM package names its finishes in the part filenames instead of declaring URDF
+# materials. Ordered: the first matching token wins, so the more specific names come first.
+COLOR_RULES: list[tuple[str, str]] = [
+    ("travel_stop_yellow", "#F2C200"),
+    ("seeed_yellow", "#F2C200"),
+    ("finger_black", "#202020"),
+    ("hardware_black", "#202020"),
+    ("matte_black", "#202020"),
+    ("carriage_grey", "#8A8A8A"),
+    ("anodized_grey", "#8A8A8A"),
+    ("rack_metal", "#C0C0C0"),
+    ("silver_trim", "#C0C0C0"),
+    ("metal", "#C0C0C0"),
+]
+FALLBACK_COLOR = "#8A8A8A"
+
 
 @dataclass
 class Variant:
@@ -58,6 +75,8 @@ class Variant:
     links: dict[str, str]  # collision mesh stem -> URDF link name
     rename: dict[str, str]  # vendor link name -> bundled link name (GLB filenames, primitives' urdf_link)
     blurb: str  # one line for ATTRIBUTION.md
+    color_rules: list[tuple[str, str]]  # filename token -> hex, for packages without URDF materials
+    licence: list[str]  # the licence paragraph for ATTRIBUTION.md
 
     @property
     def raw_base(self) -> str:
@@ -90,6 +109,15 @@ VARIANTS: dict[str, Variant] = {
         },
         rename={},
         blurb="Seeed Studio reBot-DevArm B601-DM description package",
+        color_rules=COLOR_RULES,
+        licence=[
+            "The upstream repository licenses its hardware design files (including these",
+            "meshes and the URDF) under the CERN Open Hardware Licence Version 2 - Weakly",
+            "Reciprocal, and its software under the Apache License 2.0:",
+            "",
+            "- Hardware files (meshes, URDF): `SPDX-License-Identifier: CERN-OHL-W-2.0`",
+            "- Code: `SPDX-License-Identifier: Apache-2.0`",
+        ],
     ),
     "rs": Variant(
         name="rs",
@@ -110,26 +138,22 @@ VARIANTS: dict[str, Variant] = {
         },
         rename={"gripper_end": "end_link"},
         blurb="Seeed Studio reBotArm_control_py B601-RS description package (urdf/RS)",
+        color_rules=[],  # the RS URDF declares its finishes as <material> elements
+        licence=[
+            "The upstream repository ships no LICENSE file at the pinned commit, and no",
+            "SPDX header appears in the URDF or the meshes. Seeed Studio publishes the",
+            "sibling reBot-DevArm description package under the CERN Open Hardware Licence",
+            "Version 2 - Weakly Reciprocal for hardware files and the Apache License 2.0",
+            "for code, so these RS hardware files are treated the same way:",
+            "",
+            "- Hardware files (meshes, URDF): `SPDX-License-Identifier: CERN-OHL-W-2.0`",
+            "  (assumed; upstream has not stated one for this package)",
+            "- Code: `SPDX-License-Identifier: Apache-2.0`",
+        ],
     ),
 }
 
 V: Variant = VARIANTS["dm"]  # replaced in main() from --variant
-
-# Flat colour per visual part, guessed from the part filename. Ordered: the
-# first matching token wins, so the more specific names come first.
-COLOR_RULES: list[tuple[str, str]] = [
-    ("travel_stop_yellow", "#F2C200"),
-    ("seeed_yellow", "#F2C200"),
-    ("finger_black", "#202020"),
-    ("hardware_black", "#202020"),
-    ("matte_black", "#202020"),
-    ("carriage_grey", "#8A8A8A"),
-    ("anodized_grey", "#8A8A8A"),
-    ("rack_metal", "#C0C0C0"),
-    ("silver_trim", "#C0C0C0"),
-    ("metal", "#C0C0C0"),
-]
-FALLBACK_COLOR = "#8A8A8A"
 
 
 # --------------------------------------------------------------------------- utils
@@ -147,7 +171,7 @@ def hex_to_rgba(h: str) -> list[int]:
 def color_for(filename: str) -> tuple[str, str]:
     """Return (rule_token, hex) for a visual part filename."""
     stem = Path(filename).stem.lower()
-    for token, hexc in COLOR_RULES:
+    for token, hexc in V.color_rules:
         if token in stem:
             return token, hexc
     return "fallback", FALLBACK_COLOR
@@ -213,7 +237,7 @@ def parse_origin(el: ET.Element | None) -> np.ndarray:
 
 
 def urdf_rel_to_source(fn: str) -> str:
-    """'../meshes/visual/x.stl' (relative to DM/urdf/) -> 'meshes/visual/x.stl'."""
+    """'../meshes/visual/x.stl' (relative to the package's urdf/ dir) -> 'meshes/visual/x.stl'."""
     fn = fn.replace("package://", "")
     parts = [p for p in Path(fn).parts if p not in ("..", ".")]
     if "meshes" in parts:
@@ -246,7 +270,9 @@ class LinkSpec:
 def parse_urdf(urdf_path: Path) -> dict[str, LinkSpec]:
     root = ET.parse(urdf_path).getroot()
     materials = {
-        m.get("name"): m.find("color").get("rgba") for m in root.iter("material") if m.find("color") is not None
+        m.get("name"): m.find("color").get("rgba")
+        for m in root.iter("material")
+        if m.get("name") and m.find("color") is not None
     }
     by_urdf = {v: k for k, v in V.links.items()}
     specs: dict[str, LinkSpec] = {}
@@ -271,15 +297,15 @@ def parse_urdf(urdf_path: Path) -> dict[str, LinkSpec]:
             if vmesh is None:
                 continue
             mat = vis.find("material")
-            name = mat.get("name") if mat is not None else None
+            mat_name = mat.get("name") if mat is not None else None
             inline = mat.find("color") if mat is not None else None
             spec.visuals.append(
                 VisualPart(
                     rel=urdf_rel_to_source(vmesh.get("filename")),
                     origin=parse_origin(vis.find("origin")),
                     scale=np.array([float(v) for v in vmesh.get("scale", "1 1 1").split()]),
-                    material=name,
-                    material_rgba=inline.get("rgba") if inline is not None else materials.get(name),
+                    material=mat_name,
+                    material_rgba=inline.get("rgba") if inline is not None else materials.get(mat_name),
                 )
             )
         specs[stem] = spec
@@ -550,27 +576,6 @@ def main() -> int:
         {spec.collision_rel for spec in specs.values()}
         | {v.rel for spec in specs.values() for v in spec.visuals if v.rel not in skipped_visuals}
     )
-    if V.name == "rs":
-        licence = [
-            "The upstream repository ships no LICENSE file at the pinned commit, and no",
-            "SPDX header appears in the URDF or the meshes. Seeed Studio publishes the",
-            "sibling reBot-DevArm description package under the CERN Open Hardware Licence",
-            "Version 2 - Weakly Reciprocal for hardware files and the Apache License 2.0",
-            "for code, so these RS hardware files are treated the same way:",
-            "",
-            "- Hardware files (meshes, URDF): `SPDX-License-Identifier: CERN-OHL-W-2.0`",
-            "  (assumed; upstream has not stated one for this package)",
-            "- Code: `SPDX-License-Identifier: Apache-2.0`",
-        ]
-    else:
-        licence = [
-            "The upstream repository licenses its hardware design files (including these",
-            "meshes and the URDF) under the CERN Open Hardware Licence Version 2 - Weakly",
-            "Reciprocal, and its software under the Apache License 2.0:",
-            "",
-            "- Hardware files (meshes, URDF): `SPDX-License-Identifier: CERN-OHL-W-2.0`",
-            "- Code: `SPDX-License-Identifier: Apache-2.0`",
-        ]
     lines = [
         "# Asset attribution",
         "",
@@ -583,7 +588,7 @@ def main() -> int:
         "",
         "## Licence",
         "",
-        *licence,
+        *V.licence,
         "",
         "The meshes are redistributed unmodified apart from decimation (triangle count",
         "reduction) and format conversion (binary STL; visual parts merged per link",

@@ -1,7 +1,7 @@
 PYTHON ?= .venv/bin/python
 UV ?= uv
 
-.PHONY: venv test lint format module assets clean check-bootstrap
+.PHONY: venv test lint format module assets assets-dm assets-rs clean check-bootstrap
 
 venv:
 	$(UV) venv .venv
@@ -24,9 +24,15 @@ module:
 	tar --exclude='__pycache__' --exclude='*.pyc' -czf module.tar.gz \
 		meta.json README.md CHANGELOG.md run.sh requirements.txt src
 
-assets:
+# DM is rebuilt only deliberately: decimation output drifts with the trimesh/numpy build and
+# tests/test_dm_baseline.py pins the committed bytes. `make assets` therefore builds RS only.
+assets: assets-rs
+
+assets-dm:
 	$(PYTHON) tools/build_assets.py --variant dm
-	$(PYTHON) tools/build_assets.py --variant rs --source ../reBotArm_control_py/urdf/RS
+
+assets-rs:
+	$(PYTHON) tools/build_assets.py --variant rs
 
 # Simulate a clean install: copy the tree without .venv and run the entrypoint's self-check.
 check-bootstrap:
