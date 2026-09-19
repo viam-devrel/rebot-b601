@@ -143,6 +143,33 @@ def test_rs_bundle_is_the_vendor_chain_renamed():
     assert not root.findall(".//visual") and not root.findall(".//collision")
 
 
+def test_each_model_carries_its_gripper_spec():
+    dm, rs = spatial.MODELS["dm"], spatial.MODELS["rs"]
+    assert (dm.gripper.left_key, dm.gripper.right_key) == ("left_finger", "right_finger")
+    assert (rs.gripper.left_key, rs.gripper.right_key) == ("gripper_left", "gripper_right")
+    assert dm.gripper.travel_m == 0.05
+    assert rs.gripper.travel_m == 0.0715
+    # DM's finger frames coincide with the mount; RS's are set back and rotated.
+    assert dm.gripper.left_origin == ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    assert rs.gripper.left_origin[0][0] == pytest.approx(-0.041939)
+    assert dm.gripper.axis == (0.0, 1.0, 0.0) and rs.gripper.axis == (0.0, 0.0, 1.0)
+    # Which way the right finger travels is per variant, verified against the vendor URDFs:
+    # DM's fingers share one axis with mirrored limits, so its right finger takes negative
+    # travel. RS's two joints both run 0..travel and are mirrored by their rpy instead, so
+    # both take positive travel. Getting this wrong slides the RS jaw sideways as a pair.
+    assert dm.gripper.right_travel_sign == -1.0
+    assert rs.gripper.right_travel_sign == 1.0
+    # Both variants' primitives carry the finger boxes the spec names.
+    for m in (dm, rs):
+        assert m.gripper.left_key in m.primitives and m.gripper.right_key in m.primitives
+
+
+def test_model_still_constructs_positionally():
+    # tests/test_rs.py builds Models positionally; new params must be keyword with defaults.
+    m = spatial.Model("rs", spatial.RS_URDF_PATH, spatial.ASSETS_DIR / "rs", "gripper_end")
+    assert m.gripper.travel_m == 0.05  # the default spec, not RS's
+
+
 if __name__ == "__main__":
     test_ov_round_trip()
     test_end_position_units("dm")

@@ -12,7 +12,9 @@ import functools
 import json
 import math
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Tuple
 
 URDF_PATH = Path(__file__).parent / "rebot_b601_dm.urdf"
 RS_URDF_PATH = Path(__file__).parent / "rebot_b601_rs.urdf"
@@ -258,14 +260,63 @@ def transform_to_viam_pose(t, scale_mm=1000.0):
     return (t[0][3] * scale_mm, t[1][3] * scale_mm, t[2][3] * scale_mm, ox, oy, oz, math.degrees(theta))
 
 
+Vec3 = Tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class GripperSpec:
+    """One variant's parallel-jaw geometry, in the arm's mount-link frame.
+
+    ``left_origin``/``right_origin`` are the finger joints' (xyz, rpy) as the vendor URDF
+    gives them. ``axis`` is the travel direction in the finger's OWN frame, which is why it
+    differs between variants: DM's finger frames coincide with the mount, RS's are rotated.
+    """
+
+    left_key: str  # primitives.json / STL key of the left finger
+    right_key: str
+    left_origin: Tuple[Vec3, Vec3] = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    right_origin: Tuple[Vec3, Vec3] = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    axis: Vec3 = (0.0, 1.0, 0.0)
+    travel_m: float = 0.05
+    # Direction the right finger travels relative to the left, in its own frame. DM's two
+    # joints share an axis and mirror each other through their limits (0..t and -t..0), so
+    # the right one takes negative travel. RS's both run 0..t and are mirrored by their rpy,
+    # so both take positive travel. Checked against both vendor URDFs at the pinned commit.
+    right_travel_sign: float = -1.0
+
+
+DM_GRIPPER = GripperSpec(left_key="left_finger", right_key="right_finger")
+# Seeed reBotArm_control_py urdf/RS @ 76512eab, gripper_joint1/gripper_joint2. The URDF's
+# asymmetric upper limits (0.05 / 0.0715) cannot both describe a symmetric jaw; the CAD export
+# (ReBot_Arm_RS.csv) gives 0.0715 for both, so that is used. Verify with calipers.
+RS_GRIPPER = GripperSpec(
+    left_key="gripper_left",
+    right_key="gripper_right",
+    left_origin=((-0.041939, -7.3385e-05, 0.0), (1.5708, -1.5708, 0.0)),
+    right_origin=((-0.041939, 7.3385e-05, 0.0), (-1.5708, -1.5708, 0.0)),
+    axis=(0.0, 0.0, 1.0),
+    travel_m=0.0715,
+    right_travel_sign=1.0,
+)
+
+
 class Model:
     """One arm variant's kinematic model: chain, limits, inertials and the assets built for it."""
 
-    def __init__(self, name: str, urdf_path: Path, assets_dir: Path, mount_asset_key: str):
+    def __init__(
+        self,
+        name: str,
+        urdf_path: Path,
+        assets_dir: Path,
+        mount_asset_key: str,
+        *,
+        gripper: GripperSpec = DM_GRIPPER,
+    ):
         self.name = name
         self.urdf_path = urdf_path
         self.assets_dir = assets_dir
         self.mount_asset_key = mount_asset_key  # asset stem of the mount link's body (gripper_base on DM)
+        self.gripper = gripper
         self.chain = load_chain(urdf_path)
         self.revolute = [j for j in self.chain if j.type == "revolute"]
         self.effort_nm = [j.effort for j in self.revolute]
@@ -359,5 +410,5 @@ class Model:
 
 MODELS = {
     "dm": Model("dm", URDF_PATH, ASSETS_DIR, "gripper_base"),
-    "rs": Model("rs", RS_URDF_PATH, ASSETS_DIR / "rs", "gripper_end"),
+    "rs": Model("rs", RS_URDF_PATH, ASSETS_DIR / "rs", "gripper_end", gripper=RS_GRIPPER),
 }
