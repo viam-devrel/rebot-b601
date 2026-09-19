@@ -44,8 +44,30 @@ VARIANTS = {
     "rs": dict(
         dir=ASSETS / "rs",
         commit="76512eab38ba54f11830e7cdfcba68e11629f902",
-        stl=["base_link", "link1", "link2", "link3", "link4", "link5", "link6", "gripper_end"],
-        glb=["base_link", "link1", "link2", "link3", "link4", "link5", "link6", "end_link"],
+        stl=[
+            "base_link",
+            "link1",
+            "link2",
+            "link3",
+            "link4",
+            "link5",
+            "link6",
+            "gripper_end",
+            "gripper_left",
+            "gripper_right",
+        ],
+        glb=[
+            "base_link",
+            "link1",
+            "link2",
+            "link3",
+            "link4",
+            "link5",
+            "link6",
+            "end_link",
+            "finger_left_link",
+            "finger_right_link",
+        ],
     ),
 }
 STL_CAP = 150 * 1024
@@ -107,3 +129,47 @@ def test_rs_glb_parts_carry_material_colours():
     d = json.loads((ASSETS / "rs" / "primitives.json").read_text())
     parts = d["visual_models"]["link2"]["parts"]
     assert parts and all(p["color"] != "#8A8A8A" and str(p["urdf_material"]).startswith("rs_") for p in parts.values())
+
+
+# ---- decimation must thin the shells, not dissolve them
+#
+# These CAD parts are assemblies of many separate closed shells. Decimated as one mesh
+# with a proportional face budget the small shells collapsed into loose triangles: the
+# shipped rs link2.stl was 3062 faces in 2762 pieces whose largest was 6 triangles, and
+# dm base_link.stl 3062 faces in 2409 pieces whose largest was 7 -- dust the 3D view
+# draws as floating shards and a motion planner routes straight through.
+
+
+def _shells(mesh):
+    return [len(c.faces) for c in mesh.split(only_watertight=False, repair=False)]
+
+
+def _assert_solid(shells, what):
+    assert min(shells) >= 4, f"{what}: shell of {min(shells)} face(s) cannot bound a volume"
+    assert len(shells) * 10 <= sum(shells), f"{what}: {sum(shells)} faces in {len(shells)} shells is rubble"
+
+
+@pytest.mark.parametrize("variant,link", _pairs("stl"))
+def test_collision_mesh_is_not_shards(variant, link):
+    m = trimesh.load(str(variant["dir"] / "meshes" / f"{link}.stl"), force="mesh")
+    _assert_solid(_shells(m), f"{link}.stl")
+
+
+@pytest.mark.parametrize("variant,link", _pairs("glb"))
+def test_visual_mesh_is_not_shards(variant, link):
+    scene = trimesh.load(str(variant["dir"] / "models" / f"{link}.glb"), force="scene")
+    for name, geom in scene.geometry.items():
+        _assert_solid(_shells(geom), f"{link}.glb/{name}")
+
+
+def test_small_shells_survive_decimation():
+    """A budget too small to share out must keep the little shells whole, not shred them."""
+    from tools.build_assets import decimate_to_faces
+
+    boxes = [trimesh.creation.box((0.01, 0.01, 0.01)).apply_translation((i * 0.1, 0, 0)) for i in range(8)]
+    mesh = trimesh.util.concatenate([trimesh.creation.icosphere(subdivisions=4)] + boxes)
+    out, _method = decimate_to_faces(mesh, 400)
+    shells = _shells(out)
+    assert len(shells) == 9, f"lost shells: {shells}"
+    assert sorted(shells)[:8] == [12] * 8, f"the 12-face boxes were decimated: {sorted(shells)}"
+    assert sum(shells) <= 440

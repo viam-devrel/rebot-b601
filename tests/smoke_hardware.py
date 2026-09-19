@@ -5,10 +5,13 @@ enables torque. With --move it nudges joint 6 by +5 deg and back, then stops; to
 enabled only after you confirm at an explicit prompt, and the move is refused with the
 arm's own message if any motor reports a fault, a collision or an over-temperature.
 
-With --gravity-check the arm is built too (torque on, so the motors hold where they are) but
-nothing is commanded: it prints, per joint, the torque the motors measure while holding next
-to the gravity torque the model predicts, so you can see whether the signs agree before
-turning gravity compensation on. Stop viam-server first: the CAN channel cannot be shared.
+With --gravity-check the arm is built in MIT mode, told to hold exactly where it already is,
+and then left alone: it prints, per joint, the torque the motors report while holding next to
+the gravity torque the model predicts, so you can see whether the signs agree before turning
+gravity compensation on. MIT is not optional here. The torque field is not a sensor reading,
+it is inferred from the position loop's tracking error, and profile position drives that error
+to zero, so every joint reports about 0 Nm however hard it is working. Stop viam-server first:
+the CAN channel cannot be shared.
 
 Run:
   .venv/bin/python tests/smoke_hardware.py                          # DM, port auto-detected
@@ -30,9 +33,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.rebot_b601 import spatial  # noqa: E402
-from src.rebot_b601.arm import VARIANT_VENDOR  # noqa: E402
-from src.rebot_b601.bus import BusError, SharedBus, detect_port  # noqa: E402
+from src.rebot_b601.bus import VARIANT_VENDOR, BusError, SharedBus, detect_port  # noqa: E402
 from src.rebot_b601.damiao import JointHealth  # noqa: E402
+from src.rebot_b601.gripper import RS_ACC_RAMP_S  # noqa: E402
 
 NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "gripper"]
 
@@ -46,8 +49,25 @@ ap.add_argument("--move", action="store_true", help="enable torque and nudge joi
 ap.add_argument(
     "--gravity-check",
     action="store_true",
-    help="read-only: enable torque so the arm holds, then compare measured holding torque with "
-    "the model's gravity torque per joint (stop viam-server first; the CAN channel cannot be shared)",
+    help="holds without moving: enables MIT torque at the arm's current pose, then compares the "
+    "holding torque each joint reports with the model's gravity torque. MIT is required, the "
+    "torque figure is derived from tracking error and reads ~0 in profile position "
+    "(stop viam-server first; the CAN channel cannot be shared)",
+)
+ap.add_argument(
+    "--gripper",
+    action="store_true",
+    help="MOVES THE GRIPPER: jog motor 0x07 by a step you type and print its position, to find "
+    "open_position_deg (stop viam-server first; the CAN channel cannot be shared). On rs each "
+    "step alternates the two send paths, pp and generic, so the printed distance covered in the "
+    "same half second shows which one honours --gripper-speed",
+)
+ap.add_argument(
+    "--gripper-speed",
+    type=float,
+    default=30.0,
+    help="jog speed in deg/s for --gripper (default 30). Deliberately slow: a send path that "
+    "honours it lags one that ignores it, which is the whole comparison",
 )
 args = ap.parse_args()
 
@@ -60,7 +80,10 @@ vendor = VARIANT_VENDOR[args.variant]
 
 
 def show(bus) -> list:
-    states = bus.poll_feedback(list(range(1, 8)))
+    # positions_only: every show() here runs with torque off, and a stopped RobStride motor
+    # stops streaming while motorbridge keeps serving the frame it cached at the stop. Without
+    # this the staleness check below compares a frozen frame with itself and always "passes".
+    states = bus.poll_feedback(list(range(1, 8)), positions_only=True)
     positions = []
     for i, cid in enumerate(range(1, 8)):
         s = states[cid]
@@ -81,6 +104,71 @@ def show(bus) -> list:
     return positions
 
 
+def jog_gripper():
+    """Type a signed step in motor degrees, Enter to repeat, 'q' to stop. Nothing is clamped:
+    this is how open_position_deg is discovered, so the jaws' own hard stop is the limit."""
+    from motorbridge import Mode  # deferred like the other hardware imports below
+
+    motor = bus.motor(7)
+    motor.enable()
+    motor.ensure_mode(Mode.POS_VEL if vendor == "robstride" else Mode.FORCE_POS)
+    step = 10.0
+    jog_vel = math.radians(args.gripper_speed)
+    start = bus.poll_feedback([7])[7]
+    if start is None:
+        print("no feedback from gripper motor 0x07; check power and wiring")
+        return
+    target = math.degrees(start.pos)
+
+    def deg(state):
+        return math.degrees(state.pos) if state is not None else float("nan")
+
+    print(f"gripper at {target:.2f} deg; positive/negative steps, 'q' to quit")
+    # Each step prints the streamed status frame and the mechPos parameter read side by side,
+    # with the time since the command went out, then mechPos again half a second later. Both
+    # answer the question the single "actual" column could not: if 'param' tracks the target
+    # while 'stream' trails it, the streamed read is stale; if both trail together, the motor
+    # is genuinely slow -- and then 'later' has climbed past 'param' because it is still moving.
+    print("  stream = streamed status frame, param = mechPos round trip, later = mechPos again")
+    if vendor == "robstride":
+        # One raw PP send per step, for reading the open angle off the hard stop. It is not how
+        # the module moves the jaw any more: nothing a frame or a parameter carried changed the
+        # speed on the bench, so the gripper now paces the move itself, setpoint by setpoint
+        # (gripper._stream_until_settled). --gripper-speed here is only this jog's vel_max.
+        print(f"  one raw pp send per step at {args.gripper_speed:.0f} deg/s (not the module's paced move)")
+    path = "pp" if vendor == "robstride" else "force_pos"
+    while True:
+        raw = input(f"step [{step:+.1f}] > ").strip()
+        if raw.lower() == "q":
+            break
+        if raw:
+            try:
+                step = float(raw)
+            except ValueError:
+                print("  not a number")
+                continue
+        target += step
+        sent = time.monotonic()
+        with bus.lock:
+            if path == "pp":
+                motor.robstride_send_pos_vel_pp(math.radians(target), jog_vel, jog_vel / RS_ACC_RAMP_S)
+            else:
+                motor.send_force_pos(math.radians(target), jog_vel, 0.07)
+        time.sleep(0.5)
+        streamed = bus.poll_feedback([7], positions_only=False)[7]
+        t_stream = time.monotonic() - sent
+        param = bus.poll_feedback([7], positions_only=True)[7]
+        t_param = time.monotonic() - sent
+        time.sleep(0.5)
+        later = bus.poll_feedback([7], positions_only=True)[7]
+        t_later = time.monotonic() - sent
+        print(
+            f"  [{path:>7}] target {target:8.2f}  stream {deg(streamed):8.2f} (+{t_stream:.2f}s)  "
+            f"param {deg(param):8.2f} (+{t_param:.2f}s)  later {deg(later):8.2f} (+{t_later:.2f}s)"
+        )
+    print(f"\nrecord this as open_position_deg once the jaws are fully open: {target:.1f}")
+
+
 print(f"connecting to {port} ({args.variant}, {vendor}) ...")
 try:
     bus = SharedBus.acquire(port, vendor=vendor)
@@ -88,8 +176,9 @@ except BusError as e:
     print(f"cannot open {port}: {e}")
     sys.exit(1)
 if vendor == "robstride":
-    # Ask the motors to stream status (a comms setting, not torque) so faults and
-    # temperatures show up here too; without it every row is "position only".
+    # Ask the motors to stream status (a comms setting, not torque) so that frames flow as
+    # soon as torque comes on. It does nothing for the read-only rows below: a disabled
+    # RobStride motor sends no frames at all, so those rows are position-only by necessity.
     for cid in range(1, 8):
         bus.motor(cid).robstride_set_active_report(True)
     time.sleep(0.3)
@@ -97,14 +186,21 @@ positions = show(bus)
 if len(positions) == 6:
     x, y, z, ox, oy, oz, theta = spatial.MODELS[args.variant].end_position(positions)
     print(
-        f"\nend mount (FK, {args.variant}): x={x:.1f} y={y:.1f} z={z:.1f} mm  "
+        f"\ntool mount (FK, {args.variant}): x={x:.1f} y={y:.1f} z={z:.1f} mm  "
         f"o=({ox:.3f},{oy:.3f},{oz:.3f}) theta={theta:.1f} deg"
     )
 if args.variant == "rs":
     # With torque off the motors do not hold, so a hand-move shows up in the next read; the
     # stream is on (see above) so the rows carry real status too.
     input("\nstaleness check: torque is off; move any joint by hand a little, then press Enter ... ")
+    print("  (positions below must differ from the ones above; identical rows mean a stale read)")
     show(bus)
+
+if args.gripper:
+    input("\nthe gripper motor will be enabled and jogged. Enter to continue, Ctrl-C to abort ... ")
+    jog_gripper()
+    bus.release()
+    sys.exit(0)
 
 if not (args.move or args.gravity_check):
     bus.release()
@@ -127,16 +223,29 @@ from src.rebot_b601.arm import ARM_CAN_IDS, B601Arm  # noqa: E402
 from src.rebot_b601.damiao import CollisionError, MotorFault, OverTemperatureError  # noqa: E402
 
 attrs = {"variant": args.variant, "port": port, "speed_deg_s": 20}
+if args.gravity_check:
+    # MIT, and torque left off at build: gravity_check() enables it only once it has read
+    # where the arm is resting, so the motors never go live without a setpoint to hold.
+    attrs["control_mode"] = "mit"
+    attrs["enable_on_start"] = False
 arm = B601Arm.new(ComponentConfig(name="smoke", attributes=dict_to_struct(attrs)), {})
 
 
 def gravity_check():
+    # Measured 2026-09-19 in profile position: every joint read under 0.17 Nm while the model
+    # wanted up to 5.9, and the elbow sat 20 C hotter than its neighbours while reporting
+    # 0.16 Nm. The torque field is inferred from tracking error, which that mode drives to
+    # zero, so the column was meaningless. MIT holds with a standing error set by the load.
+    resting = arm._read_positions_deg()
+    arm._configure_motors()  # enable + MIT; also flips the flag that lets full frames through
+    arm._send_targets_deg(resting)  # hold where it already is: no lurch, and no limp window
+    time.sleep(1.0)  # let each joint settle into the sag the estimate is read from
     print("\nhealth:", arm._health_report())
     positions = arm._read_positions_deg()
     states = arm._read_states()
     model = spatial.MODELS[args.variant]
     g = model.gravity_torques([math.radians(d) for d in positions], arm.gravity_vector, arm.payload_kg)
-    print(f"\ngravity check at {[round(p, 1) for p in positions]} deg (torque on, holding)")
+    print(f"\ngravity check at {[round(p, 1) for p in positions]} deg (MIT, holding)")
     print(f"  {'joint':7s} {'measured':>9s} {'model':>9s} {'expect':>9s}  sign")
     ok = True
     for i, cid in enumerate(ARM_CAN_IDS):

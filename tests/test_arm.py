@@ -124,7 +124,7 @@ async def test_stop_cancels_running_move(fast_arm):
 async def test_end_position_and_kinematics(fast_arm):
     arm, ctrl = fast_arm
     pose = await arm.get_end_position()
-    assert math.isclose(pose.x, 260.3, abs_tol=0.5) and math.isclose(pose.z, 191.7, abs_tol=0.5)
+    assert math.isclose(pose.x, 104.9, abs_tol=0.5) and math.isclose(pose.z, 191.7, abs_tol=0.5)
     kin = await arm.get_kinematics()
     assert len(kin) == 2 and b"<box" in kin[1]
     geos = await arm.get_geometries()

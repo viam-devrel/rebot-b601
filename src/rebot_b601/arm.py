@@ -21,7 +21,16 @@ from viam.services.motion import MotionClient
 from viam.utils import struct_to_dict
 
 from . import kinematics, spatial
-from .bus import DEFAULT_BAUD, LINK_ERRORS, BusError, SharedBus, detect_port, is_motor_timeout
+from .bus import (
+    DEFAULT_BAUD,
+    LINK_ERRORS,
+    VARIANT_VENDOR,
+    VARIANTS,
+    BusError,
+    SharedBus,
+    detect_port,
+    is_motor_timeout,
+)
 from .damiao import CollisionError, JointHealth, MotorFault, OverTemperatureError
 from .ops import SingleOperationManager
 from .trajectory import MoveOptions, plan
@@ -44,8 +53,6 @@ DEFAULT_MIT_KP = [45.0, 45.0, 45.0, 8.0, 9.0, 8.0]
 DEFAULT_MIT_KD = [12.0, 12.0, 12.0, 1.0, 1.0, 1.0]
 # Soft limits (deg); slightly inside the URDF limits by default.
 DEFAULT_JOINT_LIMITS = [(-150.0, 150.0), (-179.0, 1.0), (-179.0, 1.0), (-107.0, 89.0), (-89.0, 89.0), (-179.0, 179.0)]
-VARIANT_VENDOR = {"dm": "damiao", "rs": "robstride"}
-VARIANTS = tuple(VARIANT_VENDOR)
 # B601-RS: Seeed's RobStride reference gains, and soft limits just inside the RS URDF
 # (joints 2 and 3 span 0..pi on that arm, the mirror of the DM arm; bench-confirmed
 # 2026-09-18, folding reads positive). The lower edge sits 5 deg below the URDF's 0
@@ -197,7 +204,12 @@ class B601Arm(Arm, EasyResource):
         self.clip_targets = bool(attrs.get("clip_targets", False))
         self.bad_joints = sorted({int(j) for j in attrs.get("bad_joints", [])})
         self.collision_mode = attrs.get("collision_geometry", "primitives")
-        self.include_gripper_geometry = bool(attrs.get("include_gripper_geometry", False))
+        if "include_gripper_geometry" in attrs:
+            LOGGER.warning(
+                "include_gripper_geometry is no longer supported: the arm's model now ends at "
+                "the tool mount and a gripper is described by the gripper component. For a tool "
+                "with no gripper component, declare a geometry in the arm's frame config instead"
+            )
         self.reconnect_enabled = bool(attrs.get("reconnect", True))
         self.torque_limits = (
             _as_list(attrs["torque_limit_nm"], N_JOINTS, "torque_limit_nm") if "torque_limit_nm" in attrs else None
@@ -740,14 +752,14 @@ class B601Arm(Arm, EasyResource):
         # limits. DM keeps its URDF limits so its served payload stays byte-identical
         # (tests/test_dm_baseline.py); serving soft limits on DM too is a deliberate future change.
         limits = self.joint_limits if self.variant == "rs" else None
-        return kinematics.arm_kinematics(self.model, self.collision_mode, self.include_gripper_geometry, limits)
+        return kinematics.arm_kinematics(self.model, self.collision_mode, limits)
 
     async def get_geometries(self, *, extra=None, timeout=None, **kwargs) -> List[Geometry]:
         positions = await asyncio.to_thread(self._read_positions_deg)
-        return kinematics.arm_geometries(self.model, positions, self.include_gripper_geometry)
+        return kinematics.arm_geometries(self.model, positions)
 
     async def get_3d_models(self, *, extra=None, timeout=None, **kwargs) -> Dict[str, Mesh]:
-        return kinematics.arm_3d_models(self.model, self.include_gripper_geometry)
+        return kinematics.arm_3d_models(self.model)
 
     def _health_report(self) -> Dict[str, Any]:
         states = self._read_states()

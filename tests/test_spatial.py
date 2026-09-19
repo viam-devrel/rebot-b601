@@ -91,7 +91,10 @@ def test_fk_against_pytransform3d(name):
         for jn, angle in zip(joint_names, q):
             tm.set_joint(jn, angle)
         expected = tm.get_transform(model.end_link, "base_link")
-        (x, y, z), rot = model.forward_kinematics(q)
+        # The mount plate, deliberately: this is the one check that validates the whole
+        # bundled chain including the fixed end_joint, which the served chain omits.
+        m = model.link_transforms(q)[-1]
+        (x, y, z), rot = (m[0][3], m[1][3], m[2][3]), [row[:3] for row in m[:3]]
         assert np.allclose(expected[:3, 3], [x, y, z], atol=1e-9), (
             f"{name} FK position mismatch at {q}: {expected[:3, 3]} vs {(x, y, z)}"
         )
@@ -107,12 +110,13 @@ def test_end_position_units(name):
 
 def test_rs_zero_pose_is_the_folded_rest_posture():
     x, y, z, *_ = spatial.MODELS["rs"].end_position([0] * 6)
-    assert math.isclose(x, 301.7, abs_tol=0.1)
+    assert math.isclose(x, 135.5, abs_tol=0.1)
     assert math.isclose(y, 0.0, abs_tol=0.1)
     assert math.isclose(z, 217.7, abs_tol=0.1)
-    # positive j2/j3 on RS move the arm the way negative ones do on DM
+    # positive j2/j3 on RS move the arm the way negative ones do on DM; the height is the
+    # tool mount's, 166 mm short of the mount plate the old threshold was measured at
     _, _, z_up, *_ = spatial.MODELS["rs"].end_position([0, 30, 50, 0, 0, 0])
-    assert z_up > 500
+    assert z_up > 400
 
 
 def test_rs_gravity_torques_mirror_dm():
@@ -141,6 +145,73 @@ def test_rs_bundle_is_the_vendor_chain_renamed():
     assert root.find("joint[@name='end_joint']/origin").get("xyz") == "0 0 0.16621"
     assert root.find("joint[@name='joint2']/limit").get("upper") == "3.14"
     assert not root.findall(".//visual") and not root.findall(".//collision")
+
+
+def test_each_model_carries_its_gripper_spec():
+    dm, rs = spatial.MODELS["dm"], spatial.MODELS["rs"]
+    assert (dm.gripper.left_key, dm.gripper.right_key) == ("left_finger", "right_finger")
+    assert (rs.gripper.left_key, rs.gripper.right_key) == ("gripper_left", "gripper_right")
+    assert dm.gripper.travel_m == 0.05
+    assert rs.gripper.travel_m == 0.0715
+    # DM's finger frames coincide with the mount; RS's are set back and rotated.
+    assert dm.gripper.left_origin == ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    assert rs.gripper.left_origin[0][0] == pytest.approx(-0.041939)
+    assert dm.gripper.axis == (0.0, 1.0, 0.0) and rs.gripper.axis == (0.0, 0.0, 1.0)
+    # Which way the right finger travels is per variant, verified against the vendor URDFs:
+    # DM's fingers share one axis with mirrored limits, so its right finger takes negative
+    # travel. RS's two joints both run 0..travel and are mirrored by their rpy instead, so
+    # both take positive travel. Getting this wrong slides the RS jaw sideways as a pair.
+    assert dm.gripper.right_travel_sign == -1.0
+    assert rs.gripper.right_travel_sign == 1.0
+    # Both variants' primitives carry the finger boxes the spec names.
+    for m in (dm, rs):
+        assert m.gripper.left_key in m.primitives and m.gripper.right_key in m.primitives
+
+
+def test_model_still_constructs_positionally():
+    # tests/test_rs.py builds Models positionally; new params must be keyword with defaults.
+    m = spatial.Model("rs", spatial.RS_URDF_PATH, spatial.ASSETS_DIR / "rs", "gripper_end")
+    assert m.gripper.travel_m == 0.05  # the default spec, not RS's
+
+
+# Captured before the frame split. The served arm chain is about to stop at the tool mount
+# (link6), but the bundled URDF keeps end_joint and the mount plate (end_link), so these must
+# not move: the mount plate's mass (0.5 kg DM, 0.65 kg RS) still loads the joints. A change
+# here means the trim reached the physical model, which would under-compensate manual mode
+# with no visible symptom.
+GRAVITY_AT_ZERO = {
+    "dm": [0.0, 1.2831, 7.1806, 1.9798, 0.0, -0.0003],
+    "rs": [0.0, -1.8702, -6.0873, -1.6621, 0.0, 0.0008],
+}
+
+
+@pytest.mark.parametrize("name", ["dm", "rs"])
+def test_gravity_at_zero_survives_the_frame_split(name):
+    got = spatial.MODELS[name].gravity_torques([0.0] * 6)
+    assert got == pytest.approx(GRAVITY_AT_ZERO[name], abs=0.01), name
+
+
+@pytest.mark.parametrize("name", ["dm", "rs"])
+def test_end_position_reports_the_tool_mount(name):
+    m = spatial.MODELS[name]
+    assert m.tool_mount_link == "link6"
+    x, y, z, *_ = m.end_position([0] * 6)
+    expected = {"dm": (104.9, 191.7), "rs": (135.5, 217.7)}[name]
+    assert (x, z) == pytest.approx(expected, abs=0.1)
+    assert y == pytest.approx(0.0, abs=0.1)
+
+
+@pytest.mark.parametrize("name", ["dm", "rs"])
+def test_the_tool_mount_is_on_the_approach_axis(name):
+    """Pose-independent invariant, and the premise the whole split rests on: end_joint is a
+    pure +Z translation in the tool mount's frame, so that axis points at the tool at every
+    pose. A vendor URDF re-pin that moved the mount off +Z would invalidate the design, and
+    this is the two-line guard that would catch it."""
+    end_joint = spatial.MODELS[name].chain[-1]
+    assert end_joint.type == "fixed"
+    assert end_joint.origin[0][3] == pytest.approx(0.0, abs=1e-9)
+    assert end_joint.origin[1][3] == pytest.approx(0.0, abs=1e-9)
+    assert end_joint.origin[2][3] > 0.1
 
 
 if __name__ == "__main__":

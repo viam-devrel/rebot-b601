@@ -3,7 +3,7 @@
   "module_id": "devrel:rebot-b601",
   "visibility": "public",
   "url": "https://github.com/viam-devrel/rebot-b601",
-  "description": "Control the Seeed Studio reBot Arm B601: 6-DoF Damiao (B601-DM) or RobStride (B601-RS) arm with per-variant kinematics, collision geometry and 3D models, motion-service support, and the DM parallel gripper.",
+  "description": "Control the Seeed Studio reBot Arm B601: 6-DoF Damiao (B601-DM) or RobStride (B601-RS) arm with per-variant kinematics, collision geometry and 3D models, motion-service support, and the parallel gripper on either variant (force capping and hold detection are DM only).",
   "models": [
     {
       "api": "rdk:component:arm",
@@ -14,7 +14,7 @@
     {
       "api": "rdk:component:gripper",
       "model": "devrel:rebot-b601:gripper",
-      "short_description": "B601-DM parallel gripper with force-capped grab, hold detection, and frame kinematics",
+      "short_description": "B601 parallel gripper (DM and RS) with one-DoF frame kinematics; force-capped grab and hold detection on DM only",
       "markdown_link": "README.md#gripper-attributes"
     },
     {

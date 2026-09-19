@@ -26,6 +26,7 @@ class FakeMotor:
         self.vendor = vendor
         self.pos = 0.0  # rad
         self.vel = 0.0  # rad/s
+        self.vel_noise = 0.0  # RobStride: a resting motor reported -0.150 rad/s on the bench
         self.torq = 0.0
         self.t_mos = 30.0
         self.t_rotor = 30.0
@@ -48,7 +49,17 @@ class FakeMotor:
         self.closed = False  # motorbridge.Motor.close() was called (frees the handle's bus reference)
         self.active_report = False  # RobStride: status frames stream only when this is on
         self.stream_state = True  # False: get_state() never fills, only param reads work
+        # RobStride, bench 2026-09-19: the status stream runs ~0.5 s behind the motor, so a frame
+        # read during a move describes where the jaw was, not where it is. True freezes get_state()
+        # at the frame captured when it was set, while mechPos reads stay live: the extreme of
+        # that lag, and enough to tell a stale read from a slow motor.
+        self.stream_lag = False
         self.param_reads = 0
+        # RobStride RW parameters: limit_spd (rad/s), which the module reads but no longer
+        # writes, and limit_cur (A), which it does. The limit_cur value stands in for the
+        # motor's factory current limit.
+        self.params: Dict[int, float] = {0x7017: 5.0, 0x7018: 4.0}
+        self.param_writes: List[tuple] = []
         self._frozen = None  # RobStride: the last frame, served after disable() like the real cache
 
     # --- motorbridge.Motor API ---
@@ -86,6 +97,11 @@ class FakeMotor:
         self.commands.append(("pos_vel", pos, vel))
         self.target, self.vel_cap = pos, abs(vel)
 
+    def robstride_send_pos_vel_pp(self, pos, vel_max, acc_set):
+        self.controller._check_link()
+        self.commands.append(("pos_vel_pp", pos, vel_max, acc_set))
+        self.target, self.vel_cap = pos, abs(vel_max)
+
     def send_mit(self, pos, vel, kp, kd, tau):
         self.controller._check_link()
         self.commands.append(("mit", pos, vel, kp, kd, tau))
@@ -107,6 +123,10 @@ class FakeMotor:
         if self.vendor == "robstride":
             # Real RobStride motors ignore request_feedback(); state arrives only as
             # streamed status frames, which need active report on and the motor running.
+            if self.stream_lag:
+                if self._frozen is None:
+                    self._frozen = self._state()
+                return self._frozen
             if not self.enabled and self._frozen is not None:
                 return self._frozen
             return self._state() if self.active_report else None
@@ -121,7 +141,7 @@ class FakeMotor:
             arbitration_id=self.feedback_id,
             status_code=self.status_code,
             pos=self.pos,
-            vel=self.vel,
+            vel=self.vel + self.vel_noise,
             torq=self.torq,
             t_mos=self.t_mos,
             t_rotor=self.t_rotor,
@@ -154,7 +174,14 @@ class FakeMotor:
         if param_id == 0x7019:  # mechPos, rad
             self.step()
             return self.pos
+        if param_id in self.params:
+            return self.params[param_id]
         raise CallError(f"param 0x{param_id:04x} read timed out")
+
+    def robstride_write_param_f32(self, param_id: int, value: float) -> None:
+        self.controller._check_link()
+        self.param_writes.append((param_id, float(value)))
+        self.params[param_id] = float(value)
 
     # --- simulation ---
     def step(self):

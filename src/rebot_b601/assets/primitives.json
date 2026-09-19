@@ -2,6 +2,7 @@
   "units": "m",
   "frame": "URDF link frame (collision <origin> applied)",
   "bbox_source": "original (undecimated) collision mesh",
+  "variant": "dm",
   "source_repo": "https://github.com/Seeed-Projects/reBot-DevArm",
   "source_commit": "b0acdcfc47843de16a9f018c6ab1de1d31649fdc",
   "source_subdir": "Rebot_Arm_description/DM",
@@ -142,65 +143,65 @@
   "triangles": {
     "base_link": {
       "original": 81594,
-      "decimated": 3062
+      "decimated": 2949
     },
     "link1": {
       "original": 6742,
-      "decimated": 3062
+      "decimated": 3058
     },
     "link2": {
       "original": 101836,
-      "decimated": 3062
+      "decimated": 2958
     },
     "link3": {
       "original": 77100,
-      "decimated": 3062
+      "decimated": 2941
     },
     "link4": {
       "original": 57184,
-      "decimated": 3062
+      "decimated": 2886
     },
     "link5": {
       "original": 45182,
-      "decimated": 3062
+      "decimated": 2974
     },
     "link6": {
       "original": 39888,
-      "decimated": 3062
+      "decimated": 2946
     },
     "gripper_base": {
       "original": 11846,
-      "decimated": 3062
+      "decimated": 3016
     },
     "left_finger": {
       "original": 4770,
-      "decimated": 3062
+      "decimated": 3042
     },
     "right_finger": {
       "original": 4770,
-      "decimated": 3062
+      "decimated": 3043
     }
   },
   "decimation": {
-    "base_link": "quadric",
-    "link1": "quadric",
-    "link2": "quadric",
-    "link3": "quadric",
-    "link4": "quadric",
-    "link5": "quadric",
-    "link6": "quadric",
-    "gripper_base": "quadric",
-    "left_finger": "quadric",
-    "right_finger": "quadric"
+    "base_link": "components",
+    "link1": "components",
+    "link2": "components",
+    "link3": "components",
+    "link4": "components",
+    "link5": "components",
+    "link6": "components",
+    "gripper_base": "components",
+    "left_finger": "components",
+    "right_finger": "components"
   },
   "visual_models": {
     "base_link": {
       "faces_original": 81594,
-      "faces_decimated": 10967,
+      "faces_decimated": 16779,
       "methods": {
-        "colored_base_link_silver_trim": "quadric",
-        "colored_base_link_hardware_black": "quadric",
-        "colored_base_link_matte_black": "quadric"
+        "colored_base_link_silver_trim": "components",
+        "colored_base_link_hardware_black": "components",
+        "colored_base_link_matte_black": "components"
       },
       "parts": {
         "colored_base_link_silver_trim": {
@@ -219,7 +220,7 @@
           "urdf_material": "matte_black"
         }
       },
-      "bytes": 200036
+      "bytes": 305660
     },
     "link1": {
       "faces_original": 6742,
@@ -246,16 +247,16 @@
           "urdf_material": "anodized_grey"
         }
       },
-      "bytes": 123604
+      "bytes": 123320
     },
     "link2": {
       "faces_original": 101836,
-      "faces_decimated": 10960,
+      "faces_decimated": 16452,
       "methods": {
         "colored_link2_seeed_yellow": "quadric",
-        "colored_link2_matte_black": "quadric",
-        "colored_link2_hardware_black": "quadric",
-        "colored_link2_anodized_grey": "quadric"
+        "colored_link2_matte_black": "components",
+        "colored_link2_hardware_black": "components",
+        "colored_link2_anodized_grey": "components"
       },
       "parts": {
         "colored_link2_seeed_yellow": {
@@ -279,16 +280,16 @@
           "urdf_material": "anodized_grey"
         }
       },
-      "bytes": 201004
+      "bytes": 300952
     },
     "link3": {
       "faces_original": 77100,
-      "faces_decimated": 10966,
+      "faces_decimated": 15992,
       "methods": {
-        "colored_link3_seeed_yellow": "quadric",
-        "colored_link3_matte_black": "quadric",
-        "colored_link3_hardware_black": "quadric",
-        "colored_link3_anodized_grey": "quadric"
+        "colored_link3_seeed_yellow": "components",
+        "colored_link3_matte_black": "components",
+        "colored_link3_hardware_black": "components",
+        "colored_link3_anodized_grey": "components"
       },
       "parts": {
         "colored_link3_seeed_yellow": {
@@ -312,16 +313,16 @@
           "urdf_material": "anodized_grey"
         }
       },
-      "bytes": 201232
+      "bytes": 298376
     },
     "link4": {
       "faces_original": 57184,
-      "faces_decimated": 10970,
+      "faces_decimated": 16368,
       "methods": {
         "colored_link4_seeed_yellow": "quadric",
-        "colored_link4_matte_black": "quadric",
-        "colored_link4_hardware_black": "quadric",
-        "colored_link4_anodized_grey": "quadric"
+        "colored_link4_matte_black": "components",
+        "colored_link4_hardware_black": "components",
+        "colored_link4_anodized_grey": "components"
       },
       "parts": {
         "colored_link4_seeed_yellow": {
@@ -345,15 +346,15 @@
           "urdf_material": "anodized_grey"
         }
       },
-      "bytes": 200316
+      "bytes": 297676
     },
     "link5": {
       "faces_original": 45182,
-      "faces_decimated": 10966,
+      "faces_decimated": 16416,
       "methods": {
-        "colored_link5_matte_black": "quadric",
-        "colored_link5_hardware_black": "quadric",
-        "colored_link5_anodized_grey": "quadric"
+        "colored_link5_matte_black": "components",
+        "colored_link5_hardware_black": "components",
+        "colored_link5_anodized_grey": "components"
       },
       "parts": {
         "colored_link5_matte_black": {
@@ -372,14 +373,14 @@
           "urdf_material": "anodized_grey"
         }
       },
-      "bytes": 199672
+      "bytes": 297872
     },
     "link6": {
       "faces_original": 39888,
-      "faces_decimated": 10970,
+      "faces_decimated": 16475,
       "methods": {
-        "colored_link6_matte_black": "quadric",
-        "colored_link6_hardware_black": "quadric"
+        "colored_link6_matte_black": "components",
+        "colored_link6_hardware_black": "components"
       },
       "parts": {
         "colored_link6_matte_black": {
@@ -393,15 +394,15 @@
           "urdf_material": "hardware_black"
         }
       },
-      "bytes": 198840
+      "bytes": 298208
     },
     "end_link": {
       "faces_original": 11846,
-      "faces_decimated": 10968,
+      "faces_decimated": 11846,
       "methods": {
-        "colored_gripper_base_seeed_yellow": "quadric",
-        "colored_gripper_base_hardware_black": "quadric",
-        "colored_gripper_base_metal": "quadric"
+        "colored_gripper_base_seeed_yellow": "unchanged",
+        "colored_gripper_base_hardware_black": "unchanged",
+        "colored_gripper_base_metal": "unchanged"
       },
       "parts": {
         "colored_gripper_base_seeed_yellow": {
@@ -420,7 +421,7 @@
           "urdf_material": "gripper_base_metal"
         }
       },
-      "bytes": 199328
+      "bytes": 215080
     },
     "finger_left_link": {
       "faces_original": 4770,
