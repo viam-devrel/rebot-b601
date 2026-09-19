@@ -6,7 +6,7 @@ on purpose, recapture them in the same commit and say why."""
 import hashlib
 from pathlib import Path
 
-from src.rebot_b601 import kinematics
+from src.rebot_b601 import kinematics, spatial
 
 ASSETS = Path(__file__).resolve().parent.parent / "src" / "rebot_b601" / "assets"
 
@@ -41,9 +41,9 @@ def _sha(b: bytes) -> str:
 
 
 def test_dm_kinematics_payloads_are_unchanged():
-    assert _sha(kinematics.arm_kinematics("primitives")[1]) == PRIMITIVES_SHA
-    assert _sha(kinematics.arm_kinematics("none")[1]) == NONE_SHA
-    _, urdf, meshes = kinematics.arm_kinematics("meshes")
+    assert _sha(kinematics.arm_kinematics(spatial.MODELS["dm"], "primitives")[1]) == PRIMITIVES_SHA
+    assert _sha(kinematics.arm_kinematics(spatial.MODELS["dm"], "none")[1]) == NONE_SHA
+    _, urdf, meshes = kinematics.arm_kinematics(spatial.MODELS["dm"], "meshes")
     assert _sha(urdf) == MESHES_URDF_SHA
     assert {k: _sha(v.mesh) for k, v in meshes.items()} == MESH_SHAS
 

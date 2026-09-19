@@ -165,6 +165,7 @@ class B601Arm(Arm, EasyResource):
         self.variant = attrs.get("variant", "dm")
         rs = self.variant == "rs"
         vendor = VARIANT_VENDOR[self.variant]
+        self.model = spatial.MODELS[self.variant]
         port = attrs.get("port") or detect_port()
         baud = int(attrs.get("baud", DEFAULT_BAUD))
 
@@ -720,14 +721,14 @@ class B601Arm(Arm, EasyResource):
         # The bundled URDF is the DM arm; on RS its joint 2/3 range (-180..0) would make
         # viam-server reject every target the RS motors can reach. Serve the soft limits.
         limits = self.joint_limits if self.variant == "rs" else None
-        return kinematics.arm_kinematics(self.collision_mode, self.include_gripper_geometry, limits)
+        return kinematics.arm_kinematics(self.model, self.collision_mode, self.include_gripper_geometry, limits)
 
     async def get_geometries(self, *, extra=None, timeout=None, **kwargs) -> List[Geometry]:
         positions = await asyncio.to_thread(self._read_positions_deg)
-        return kinematics.arm_geometries(positions, self.include_gripper_geometry)
+        return kinematics.arm_geometries(self.model, positions, self.include_gripper_geometry)
 
     async def get_3d_models(self, *, extra=None, timeout=None, **kwargs) -> Dict[str, Mesh]:
-        return kinematics.arm_3d_models(self.include_gripper_geometry)
+        return kinematics.arm_3d_models(self.model, self.include_gripper_geometry)
 
     def _health_report(self) -> Dict[str, Any]:
         states = self._read_states()
