@@ -70,7 +70,10 @@ vendor = VARIANT_VENDOR[args.variant]
 
 
 def show(bus) -> list:
-    states = bus.poll_feedback(list(range(1, 8)))
+    # positions_only: every show() here runs with torque off, and a stopped RobStride motor
+    # stops streaming while motorbridge keeps serving the frame it cached at the stop. Without
+    # this the staleness check below compares a frozen frame with itself and always "passes".
+    states = bus.poll_feedback(list(range(1, 8)), positions_only=True)
     positions = []
     for i, cid in enumerate(range(1, 8)):
         s = states[cid]
@@ -136,8 +139,9 @@ except BusError as e:
     print(f"cannot open {port}: {e}")
     sys.exit(1)
 if vendor == "robstride":
-    # Ask the motors to stream status (a comms setting, not torque) so faults and
-    # temperatures show up here too; without it every row is "position only".
+    # Ask the motors to stream status (a comms setting, not torque) so that frames flow as
+    # soon as torque comes on. It does nothing for the read-only rows below: a disabled
+    # RobStride motor sends no frames at all, so those rows are position-only by necessity.
     for cid in range(1, 8):
         bus.motor(cid).robstride_set_active_report(True)
     time.sleep(0.3)
@@ -152,6 +156,7 @@ if args.variant == "rs":
     # With torque off the motors do not hold, so a hand-move shows up in the next read; the
     # stream is on (see above) so the rows carry real status too.
     input("\nstaleness check: torque is off; move any joint by hand a little, then press Enter ... ")
+    print("  (positions below must differ from the ones above; identical rows mean a stale read)")
     show(bus)
 
 if args.gripper:
