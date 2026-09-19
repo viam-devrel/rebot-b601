@@ -84,12 +84,43 @@ def test_dm_base_box_dims_unchanged():
     assert math.isclose(base.box.dims_mm.x, 140.0, abs_tol=1.0)
 
 
-def test_gripper_urdf_has_one_prismatic_dof():
-    fmt, data = kinematics.gripper_kinematics("primitives")
+@pytest.mark.parametrize("model", BOTH)
+def test_gripper_urdf_has_one_prismatic_dof(model):
+    fmt, data = kinematics.gripper_kinematics(model, "primitives")
     root = ET.fromstring(data)
     assert [j.get("type") for j in root.findall("joint")].count("prismatic") == 1
+    # Link names are identical across variants so frame-system names stay stable.
     assert _links_with_collision(data) == {"gripper_base", "finger_left_link", "finger_right_link"}
-    assert len(kinematics.gripper_geometries(0.02)) == 3
+    limit = root.find("joint[@name='finger_left']/limit")
+    assert float(limit.get("upper")) == pytest.approx(model.gripper.travel_m)
+    assert len(kinematics.gripper_geometries(model, 0.02)) == 3
+
+
+def test_rs_gripper_fingers_are_set_back_from_the_mount():
+    rs = spatial.MODELS["rs"]
+    root = ET.fromstring(kinematics.gripper_kinematics(rs, "primitives")[1])
+    origin = root.find("joint[@name='finger_left']/origin")
+    assert float(origin.get("xyz").split()[0]) == pytest.approx(-0.041939)
+    assert origin.get("rpy").split()[0] == "1.5708"
+
+
+@pytest.mark.parametrize("model", BOTH)
+def test_gripper_fingers_travel_in_opposite_directions(model):
+    """The jaw must open. A shared travel sign moves both fingers the same way, which a
+    distance check can miss entirely."""
+    closed = kinematics.gripper_geometries(model, 0.0)
+    wide = kinematics.gripper_geometries(model, model.gripper.travel_m)
+
+    def displacement(i):
+        a, b = closed[i].center, wide[i].center
+        return (b.x - a.x, b.y - a.y, b.z - a.z)
+
+    left, right = displacement(1), displacement(2)
+    expected_mm = 1000.0 * model.gripper.travel_m
+    assert math.dist((0, 0, 0), left) == pytest.approx(expected_mm, abs=0.01), model.name
+    assert math.dist((0, 0, 0), right) == pytest.approx(expected_mm, abs=0.01), model.name
+    # Opposite directions is the whole point: the bug makes this dot product positive.
+    assert sum(a * b for a, b in zip(left, right)) < 0, (model.name, left, right)
 
 
 @pytest.mark.parametrize("model", BOTH)

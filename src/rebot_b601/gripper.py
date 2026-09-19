@@ -25,7 +25,7 @@ from viam.resource.base import ResourceBase
 from viam.resource.easy_resource import EasyResource
 from viam.utils import struct_to_dict
 
-from . import kinematics
+from . import kinematics, spatial
 from .bus import DEFAULT_BAUD, LINK_ERRORS, BusError, SharedBus, detect_port, is_motor_timeout
 from .damiao import JointHealth, MotorFault
 from .ops import SingleOperationManager
@@ -301,11 +301,13 @@ class B601Gripper(Gripper, EasyResource):
         return abs(state.vel) > _MOVING_VEL_RAD_S
 
     async def get_kinematics(self, *, extra=None, timeout=None, **kwargs):
-        return kinematics.gripper_kinematics(self.collision_mode)
+        return kinematics.gripper_kinematics(spatial.MODELS["dm"], self.collision_mode)  # Task 6: self.model
 
     async def get_geometries(self, *, extra=None, timeout=None, **kwargs) -> List[Geometry]:
         state = await asyncio.to_thread(self._state)
-        return kinematics.gripper_geometries(self.travel_m_from_deg(math.degrees(state.pos)))
+        return kinematics.gripper_geometries(
+            spatial.MODELS["dm"], self.travel_m_from_deg(math.degrees(state.pos))
+        )  # Task 6: self.model
 
     async def get_current_inputs(self, *, extra=None, timeout=None, **kwargs):
         """Single input: left-finger travel in metres (0 = closed, 0.05 = fully open)."""

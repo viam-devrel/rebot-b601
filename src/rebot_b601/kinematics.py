@@ -165,51 +165,54 @@ def arm_3d_models(model: spatial.Model, include_gripper: bool = False) -> Dict[s
 
 
 # --- gripper ---
-# The gripper component is DM-only: the RS URDF ships gripper_end as a mount, not as a
-# 1-DoF gripper, so these always use the DM assets.
 
 
-def gripper_urdf(mode: str = "primitives") -> Tuple[bytes, Dict[str, Mesh]]:
+def gripper_urdf(model: spatial.Model, mode: str = "primitives") -> Tuple[bytes, Dict[str, Mesh]]:
     """A one-DoF gripper model: base + left finger on a prismatic joint + a
     right-finger envelope covering its full travel. Root frame = the arm's
     end_link, so configure the gripper with the arm as frame parent and zero
     translation."""
     robot = ET.Element("robot", name="rebot_b601_gripper")
     meshes: Dict[str, Mesh] = {}
-    dm = spatial.MODELS["dm"]
+    g = model.gripper
+    axis_i = max(range(3), key=lambda i: abs(g.axis[i]))
 
-    def add_link(name: str, asset: str, widen_y: float = 0.0, shift_y: float = 0.0):
+    def add_link(name: str, asset: str, widen: float = 0.0, shift: float = 0.0):
         link = ET.SubElement(robot, "link", name=name)
         if mode == "none":
             return
-        data = _read_mesh(dm, asset) if mode == "meshes" else None
+        data = _read_mesh(model, asset) if mode == "meshes" else None
         if data is not None:
             filename = _mesh_filename(asset)
             link.append(_collision_mesh(filename))
             meshes[filename] = Mesh(content_type=_STL_CONTENT_TYPE, mesh=data)
             return
-        prim = dm.primitives.get(asset)
+        prim = model.primitives.get(asset)
         if prim:
             center = list(prim["center"])
             size = list(prim["size"])
-            center[1] += shift_y
-            size[1] += widen_y
+            center[axis_i] += shift
+            size[axis_i] += widen
             link.append(_collision_box(center, size))
 
-    add_link("gripper_base", "gripper_base")
-    add_link("finger_left_link", "left_finger")
+    add_link("gripper_base", model.mount_asset_key)
+    add_link("finger_left_link", g.left_key)
     # The right finger mirrors the left; model it as a static envelope over its travel.
-    add_link("finger_right_link", "right_finger", widen_y=FINGER_TRAVEL_M, shift_y=-FINGER_TRAVEL_M / 2)
+    add_link(
+        "finger_right_link", g.right_key,
+        widen=g.travel_m, shift=g.right_travel_sign * g.travel_m / 2,
+    )
 
+    (lxyz, lrpy), (rxyz, rrpy) = g.left_origin, g.right_origin
     j = ET.SubElement(robot, "joint", name="finger_left", type="prismatic")
-    ET.SubElement(j, "origin", xyz="0 0 0", rpy="0 0 0")
+    ET.SubElement(j, "origin", xyz=_fmt(lxyz), rpy=_fmt(lrpy))
     ET.SubElement(j, "parent", link="gripper_base")
     ET.SubElement(j, "child", link="finger_left_link")
-    ET.SubElement(j, "axis", xyz="0 1 0")
-    ET.SubElement(j, "limit", lower="0", upper=f"{FINGER_TRAVEL_M}", effort="8", velocity="0.08")
+    ET.SubElement(j, "axis", xyz=_fmt(g.axis))
+    ET.SubElement(j, "limit", lower="0", upper=f"{g.travel_m}", effort="8", velocity="0.08")
 
     j = ET.SubElement(robot, "joint", name="finger_right", type="fixed")
-    ET.SubElement(j, "origin", xyz="0 0 0", rpy="0 0 0")
+    ET.SubElement(j, "origin", xyz=_fmt(rxyz), rpy=_fmt(rrpy))
     ET.SubElement(j, "parent", link="gripper_base")
     ET.SubElement(j, "child", link="finger_right_link")
 
@@ -218,30 +221,37 @@ def gripper_urdf(mode: str = "primitives") -> Tuple[bytes, Dict[str, Mesh]]:
     return ET.tostring(robot, encoding="utf-8", xml_declaration=True), meshes
 
 
-def gripper_kinematics(mode: str = "primitives"):
-    data, meshes = gripper_urdf(mode)
+def gripper_kinematics(model: spatial.Model, mode: str = "primitives"):
+    data, meshes = gripper_urdf(model, mode)
     fmt = KinematicsFileFormat.KINEMATICS_FILE_FORMAT_URDF
     if meshes:
         return (fmt, data, meshes)
     return (fmt, data)
 
 
-def gripper_geometries(finger_travel_m: float) -> List[Geometry]:
+def gripper_geometries(model: spatial.Model, finger_travel_m: float) -> List[Geometry]:
     """Gripper boxes in the gripper's own frame for the given left-finger travel."""
+    g = model.gripper
     identity = spatial._transform([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])
-    dm = spatial.MODELS["dm"]
+
+    def finger_frame(origin, travel):
+        (xyz, rpy) = origin
+        base = spatial._transform(spatial._rot_rpy(*rpy), list(xyz))
+        slide = spatial._transform(
+            [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [a * travel for a in g.axis]
+        )
+        return spatial._mat_mul(base, slide)
+
     out = []
-    prim = dm.primitives.get("gripper_base")
+    prim = model.primitives.get(model.mount_asset_key)
     if prim:
         out.append(_box_geometry(identity, prim["center"], prim["size"], "gripper_base"))
-    prim = dm.primitives.get("left_finger")
+    prim = model.primitives.get(g.left_key)
     if prim:
-        c = list(prim["center"])
-        c[1] += finger_travel_m
-        out.append(_box_geometry(identity, c, prim["size"], "finger_left_link"))
-    prim = dm.primitives.get("right_finger")
+        t = finger_frame(g.left_origin, finger_travel_m)
+        out.append(_box_geometry(t, prim["center"], prim["size"], "finger_left_link"))
+    prim = model.primitives.get(g.right_key)
     if prim:
-        c = list(prim["center"])
-        c[1] -= finger_travel_m
-        out.append(_box_geometry(identity, c, prim["size"], "finger_right_link"))
+        t = finger_frame(g.right_origin, g.right_travel_sign * finger_travel_m)
+        out.append(_box_geometry(t, prim["center"], prim["size"], "finger_right_link"))
     return out

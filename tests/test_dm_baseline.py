@@ -66,14 +66,14 @@ def test_dm_glb_bytes_are_unchanged():
 
 
 def test_dm_gripper_payloads_are_unchanged():
-    assert _sha(kinematics.gripper_kinematics("primitives")[1]) == GRIPPER_PRIMITIVES_SHA
-    assert _sha(kinematics.gripper_kinematics("none")[1]) == GRIPPER_NONE_SHA
-    _, urdf, meshes = kinematics.gripper_kinematics("meshes")
+    assert _sha(kinematics.gripper_kinematics(spatial.MODELS["dm"], "primitives")[1]) == GRIPPER_PRIMITIVES_SHA
+    assert _sha(kinematics.gripper_kinematics(spatial.MODELS["dm"], "none")[1]) == GRIPPER_NONE_SHA
+    _, urdf, meshes = kinematics.gripper_kinematics(spatial.MODELS["dm"], "meshes")
     assert _sha(urdf) == GRIPPER_MESHES_URDF_SHA
     assert {k: _sha(v.mesh) for k, v in meshes.items()} == GRIPPER_MESH_SHAS
 
 
 def test_dm_gripper_geometries_are_unchanged():
-    geos = kinematics.gripper_geometries(0.02)
+    geos = kinematics.gripper_geometries(spatial.MODELS["dm"], 0.02)
     assert [g.label for g in geos] == ["gripper_base", "finger_left_link", "finger_right_link"]
     assert geos[1].center.y == pytest.approx(geos[0].center.y + 20.0 + 13.7, abs=0.2)
