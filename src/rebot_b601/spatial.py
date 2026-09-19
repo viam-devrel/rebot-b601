@@ -8,6 +8,7 @@ spatialmath.QuatToOV (spatialmath/quaternion.go) so poses reported here match
 what the RDK computes from the same URDF.
 """
 
+import functools
 import json
 import math
 import xml.etree.ElementTree as ET
@@ -267,25 +268,21 @@ class Model:
         self.mount_asset_key = mount_asset_key  # asset stem of the mount link's body (gripper_base on DM)
         self.chain = load_chain(urdf_path)
         self.revolute = [j for j in self.chain if j.type == "revolute"]
-        self.limits_deg = [(math.degrees(j.lower), math.degrees(j.upper)) for j in self.revolute]
         self.effort_nm = [j.effort for j in self.revolute]
         self.link_order, self.link_inertials = _load_links(urdf_path)
         self.end_link = self.link_order[-1]
+        # every link but the mount; the mount's geometry belongs to the gripper component
         self.arm_links = self.link_order[:-1]
-        self._primitives = None
 
+    @functools.cached_property
     def primitives(self) -> dict:
-        """Axis-aligned collision boxes per asset key from assets_dir/primitives.json (cached)."""
-        if self._primitives is None:
-            path = self.assets_dir / "primitives.json"
-            self._primitives = {}
-            if path.exists():
-                data = json.loads(path.read_text())
-                links = data.get("links", data)
-                self._primitives = {
-                    k: v for k, v in links.items() if isinstance(v, dict) and "center" in v and "size" in v
-                }
-        return self._primitives
+        """Axis-aligned collision boxes per asset key from assets_dir/primitives.json."""
+        path = self.assets_dir / "primitives.json"
+        if not path.exists():
+            return {}
+        data = json.loads(path.read_text())
+        links = data.get("links", data)
+        return {k: v for k, v in links.items() if isinstance(v, dict) and "center" in v and "size" in v}
 
     def forward_kinematics(self, joint_rads):
         """Compute the end-effector transform for the given revolute joint angles.
@@ -378,7 +375,6 @@ MODELS = {
 # the second variant keep working unchanged.
 _DM = MODELS["dm"]
 REVOLUTE_JOINTS = _DM.revolute
-JOINT_LIMITS_DEG = _DM.limits_deg
 JOINT_EFFORT_NM = _DM.effort_nm
 LINK_ORDER = _DM.link_order
 LINK_INERTIALS = _DM.link_inertials

@@ -85,13 +85,16 @@ def test_fk_against_pytransform3d(name):
     tm.load_urdf(model.urdf_path.read_text())
     joint_names = [j.name for j in model.revolute]
     limits = [(j.lower, j.upper) for j in model.revolute]
+    rng = random.Random(1234 if name == "dm" else 5678)
     for trial in range(200):
-        q = [0.0] * 6 if trial == 0 else [random.uniform(lo, hi) for lo, hi in limits]
+        q = [0.0] * 6 if trial == 0 else [rng.uniform(lo, hi) for lo, hi in limits]
         for jn, angle in zip(joint_names, q):
             tm.set_joint(jn, angle)
         expected = tm.get_transform(model.end_link, "base_link")
         (x, y, z), rot = model.forward_kinematics(q)
-        assert np.allclose(expected[:3, 3], [x, y, z], atol=1e-9), f"{name} FK position mismatch at {q}"
+        assert np.allclose(expected[:3, 3], [x, y, z], atol=1e-9), (
+            f"{name} FK position mismatch at {q}: {expected[:3, 3]} vs {(x, y, z)}"
+        )
         assert np.allclose(expected[:3, :3], np.array(rot), atol=1e-9), f"{name} FK rotation mismatch at {q}"
 
 
@@ -99,6 +102,7 @@ def test_fk_against_pytransform3d(name):
 def test_end_position_units(name):
     x, y, z, ox, oy, oz, theta = spatial.MODELS[name].end_position([0, 0, 0, 0, 0, 0])
     assert abs(math.sqrt(ox * ox + oy * oy + oz * oz) - 1.0) < 1e-9
+    assert abs(x) + abs(z) > 100  # millimetres, not metres
 
 
 def test_rs_zero_pose_is_the_folded_rest_posture():
@@ -115,6 +119,9 @@ def test_dm_aliases_still_point_at_the_dm_model():
     dm = spatial.MODELS["dm"]
     assert spatial.URDF_PATH == dm.urdf_path and spatial.REVOLUTE_JOINTS is dm.revolute
     assert spatial.JOINT_EFFORT_NM == dm.effort_nm and spatial.LINK_ORDER is dm.link_order
+    assert spatial.end_position.__self__ is dm
+    assert spatial.gravity_torques.__self__ is dm
+    assert spatial.link_transforms.__self__ is dm
     assert spatial.end_position([0] * 6) == dm.end_position([0] * 6)
     assert spatial.gravity_torques([0] * 6) == dm.gravity_torques([0] * 6)
     assert spatial.link_transforms([0] * 6) == dm.link_transforms([0] * 6)
