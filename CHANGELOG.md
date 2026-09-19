@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.6.0 (2026-09-18)
+
+### Added
+- The gripper component runs on the B601-RS. `variant: "rs"` drives motor `0x07` (a RobStride rs-00) in
+  profile position (`POS_VEL`), because RobStride has no force-limited position mode: `speed_deg_s` is a
+  velocity limit and the firmware current limit is the only squeeze ceiling. RS requires `port` (the CAN
+  channel; the `arm` dependency is a gRPC client under viam-server and cannot supply it) and
+  `open_position_deg` (nothing records it for the B601-RS and it depends on where the jaws sat when the
+  motor was zeroed).
+- `tests/smoke_hardware.py --variant rs --port <chan> --gripper` jogs motor `0x07` by a signed step, with
+  no clamping, so the fully open angle can be read off against the jaws' hard stop. That reading is
+  `open_position_deg`.
+- RS finger meshes, GLBs and collision boxes, so the RS gripper serves a real one-DoF kinematic model
+  (`get_kinematics`, `get_geometries`, `Get3DModels`) and `include_gripper_geometry` shows fingers on RS.
+
+### Changed
+- The gripper takes a `variant` attribute and refuses a port already open for the other vendor's motors.
+- Each variant's parallel-jaw geometry comes from `spatial.MODELS[variant].gripper`: finger travel is
+  0.0715 m per finger on RS against 0.05 on DM, so the kinematic input range differs by variant. DM's
+  served payloads are unchanged.
+- Settling is judged by variant: DM by near-zero velocity, RS by the position not changing (RS status
+  velocity is not a measurement; a resting motor reads -0.15 rad/s). `stall_polls` counts either.
+- The RS gripper's default `speed_deg_s` is 286.5 (5 rad/s, the vendor's limit) instead of DM's 900.
+- `torque_ratio` is accepted on RS and ignored, with a warning at configure.
+
+### Not yet on RS
+- Force control: `set_force`/`get_force`, `grab_with_force` and their `torque` aliases are refused with
+  an explanation. There is no torque ratio to set.
+- Holding detection: `grab` returns `False` and `is_holding_something` reports false. Deciding that the
+  jaws hold something needs a force signal RS does not provide, and a threshold tuned on hardware.
+- Discovery still finds DM boards only.
+
+### Known open items
+- RS finger travel, 0.0715 m, comes from Seeed's CAD export (`ReBot_Arm_RS.csv`). The vendor URDF
+  disagrees with itself, giving 0.05 on one finger and 0.0715 on the other, which cannot both describe a
+  symmetric jaw. Check with calipers.
+- DM finger travel is this module's own 0.05 m, while Seeed's DM vendor URDF says 0.0285 per finger. DM
+  is left unchanged pending the same caliper measurement, so its served payload stays byte-identical
+  (`kinematics.FINGER_TRAVEL_M` records the discrepancy).
+
 ## 0.5.0 (2026-09-18)
 
 ### Added

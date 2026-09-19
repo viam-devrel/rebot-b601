@@ -89,8 +89,7 @@ link6, about 73 mm past the front of the RS gripper body. At zero the RS end mou
 z 217.7 mm. The RS arm rests in the same folded posture as DM, with positive joint 2/3 angles where DM
 uses negative.
 
-Not on RS yet: the gripper component (RS ships `gripper_end` as a mount, not a 1-DoF gripper) refuses to
-attach to an RS arm, and discovery finds DM boards only. Manual mode is damping only until gravity
+Not on RS yet: discovery finds DM boards only. Manual mode is damping only until gravity
 compensation is checked on the bench: the RS mass model exists but is unverified, so `gravity_scale` is
 forced to 0 and `{"gravity_torques": true}` reports the model's numbers with an "unverified" note rather
 than applying them.
@@ -118,7 +117,7 @@ that is licensed that way and is the DM source. Confirm this with Seeed before a
 | `tolerance_deg` | number | `2.0` | Settle tolerance for blocking moves |
 | `motion` | string | unset | Name of a motion service (usually `"builtin"`) used by `move_to_position` |
 | `collision_geometry` | string | `"primitives"` | Collision bodies in the served URDF: `"primitives"` (one box per link), `"meshes"` (decimated vendor STLs), or `"none"` |
-| `include_gripper_geometry` | bool | `false` | Attach the gripper body box to `end_link` (DM: the `gripper_base` asset; RS: the `gripper_end` body). Finger GLBs exist only for DM, so RS 3D models show the body without fingers. Leave off when the gripper component is configured, or the two will self-collide |
+| `include_gripper_geometry` | bool | `false` | Attach the gripper body box to `end_link` (DM: the `gripper_base` asset; RS: the `gripper_end` body). Leave off when the gripper component is configured, or the two will self-collide |
 | `torque_limit_nm` | number or [6] | unset | Software collision stop: abort and hold when a joint's measured torque exceeds this for `torque_trip_polls` consecutive polls. Works on RS: a holding joint reports 1–2 Nm; torque reads 0 only while the motor is unpowered or known by position alone |
 | `torque_trip_polls` | int | `3` | Consecutive over-limit polls (at 10 Hz) that count as a collision |
 | `temperature_warn_c` | number | `60` | Log a warning when a motor is at or above this temperature |
@@ -136,17 +135,36 @@ that is licensed that way and is the DM source. Confirm this with Seeed before a
 
 | Attribute | Type | Default | Description |
 |---|---|---|---|
-| `arm` | string | unset | Name of the arm component. Declares the dependency and inherits `port`/`baud` from it |
-| `port`, `baud` | | as above | Only needed without `arm` |
-| `open_position_deg` | number | `-270` | Motor angle when fully open |
+| `variant` | string | `"dm"` | `"dm"` for the B601-DM (Damiao, USB serial bridge) or `"rs"` for the B601-RS (RobStride, CAN). Must match the arm's: opening a port for the other vendor's motors is refused |
+| `arm` | string | unset | Name of the arm component. Declares the dependency, and inherits `port`/`baud` when the dependency is a local `B601Arm` object. Under viam-server it is a gRPC client, so nothing is inherited: set `port` yourself |
+| `port`, `baud` | | as above | dm: auto-detected if omitted. rs: `port` (the CAN channel) is **required**, configuration fails without it |
+| `open_position_deg` | number | dm `-270`; rs **required** | Motor angle when fully open. There is no RS default: it depends on where the jaws sat when the motor was zeroed, so measure it (see below) |
 | `closed_position_deg` | number | `0` | Motor angle when fully closed |
-| `speed_deg_s` | number | `900` | Gripper motor speed (10–3000) |
-| `torque_ratio` | number | `0.07` | Max grip force, `(0, 1]` |
-| `holding_threshold_deg` | number | `15` | Stall distance from fully closed that counts as "holding something" |
-| `stall_polls` | int | `4` | Consecutive near-zero-velocity polls that count as settled |
+| `speed_deg_s` | number | dm `900`; rs `286.5` (5 rad/s, the vendor's limit) | Gripper motor speed, deg/s. `set_speed` clamps to 10–3000 |
+| `torque_ratio` | number | `0.07` | Max grip force, `(0, 1]`. dm only; accepted on rs but ignored, with a warning |
+| `holding_threshold_deg` | number | `15` | Stall distance from fully closed that counts as "holding something". dm only |
+| `stall_polls` | int | `4` | Consecutive no-motion polls (at 20 Hz) that count as settled: dm near-zero velocity, rs a position change under 0.5° |
 | `move_timeout_s` | number | `6` | Give up waiting for a grab/open after this long |
 | `collision_geometry` | string | `"primitives"` | Same options as the arm |
 | `reconnect` | bool | `true` | As for the arm |
+
+On the **B601-RS** the gripper is the same motor address, `0x07`, but a RobStride rs-00. RobStride has
+no force-limited position mode, so the module runs it in profile position (`POS_VEL`) instead of DM's
+`FORCE_POS`: `speed_deg_s` is a velocity limit and the firmware current limit is the only squeeze
+ceiling. Two attributes are required. `port` is required because the `arm` dependency is a gRPC client
+under viam-server and cannot hand over the local bus. `open_position_deg` is required because nothing
+records it for the B601-RS and it depends on where the jaws sat when the motor was zeroed; find it with
+
+```
+tests/smoke_hardware.py --variant rs --port can0 --gripper
+```
+
+which jogs motor `0x07` by a signed step you type, unclamped, until the jaws reach their own hard stop —
+that reading is `open_position_deg`. Consequences of the missing force signal: `set_force`, `get_force`
+and `grab_with_force` (and their `torque` aliases) are refused with an explanation, and `grab` always
+returns `False`, because deciding that the jaws are holding something needs a force signal RS does not
+provide. Moves still settle: RS status velocity is not a measurement (a resting motor reads -0.15 rad/s),
+so settling is judged by the position not changing rather than by velocity.
 
 ## Motion
 
@@ -211,8 +229,8 @@ Gripper:
 | `{"get": true}` | Motor degrees and open fraction (0 closed, 1 open) |
 | `{"set": -135}` / `{"set": {"fraction": 0.5}}` | Move to a motor angle or an open fraction and wait for stall/arrival |
 | `{"set_speed": 500}` / `{"get_speed": true}` | Gripper speed, deg/s |
-| `{"set_force": 0.2}` / `{"get_force": true}` | Grip force ratio `(0, 1]` (also `set_torque`/`get_torque`) |
-| `{"grab_with_force": {"position": 0, "speed": 800, "force": 0.5}}` | One-shot grab with explicit target, speed, and force; `fraction` may replace `position` |
+| `{"set_force": 0.2}` / `{"get_force": true}` | Grip force ratio `(0, 1]` (also `set_torque`/`get_torque`). dm only; refused on rs |
+| `{"grab_with_force": {"position": 0, "speed": 800, "force": 0.5}}` | One-shot grab with explicit target, speed, and force; `fraction` may replace `position`. dm only; refused on rs |
 | `{"status": true}` (also `raw_state`, `health`) | Decoded status, position, temperatures, open fraction, holding flag |
 | `{"torque": "disable"}` / `{"clear_errors": true}` / `{"set_zero_position": true}` | As for the arm |
 
@@ -239,7 +257,8 @@ collision boxes, meshes and GLBs; the arm picks the model from `variant`.
 - `get_geometries` returns the per-link bounding boxes posed by the current joint state.
 - `Get3DModels` returns per-link GLB visual meshes for the app's 3D view.
 - The gripper serves a one-DoF URDF (left finger on a prismatic joint, right finger as a static
-  envelope). Its kinematic input is the left finger's travel in metres, 0 (closed) to 0.05 (open).
+  envelope). Its kinematic input is the left finger's travel in metres, 0 (closed) to the variant's
+  travel when open: 0.05 on DM, 0.0715 on RS.
 - DM meshes come from Seeed's `reBot-DevArm` repository (`src/rebot_b601/assets/ATTRIBUTION.md`), RS
   meshes from `reBotArm_control_py` (`src/rebot_b601/assets/rs/ATTRIBUTION.md`; see the licence note under
   B601-RS). Rebuild with `python tools/build_assets.py --variant {dm,rs}`.

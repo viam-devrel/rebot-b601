@@ -28,7 +28,11 @@ from . import spatial
 
 COLLISION_MODES = ("primitives", "meshes", "none")
 
-FINGER_TRAVEL_M = 0.05  # per finger, from the vendor URDF prismatic limits
+# Not read anywhere: travel comes from `model.gripper.travel_m`. Kept as the record of a known
+# discrepancy -- 0.05 is this module's own DM figure, while Seeed's DM vendor URDF gives 0.0285 per
+# finger. DM is deliberately left unchanged pending a caliper measurement, so its served payload
+# stays byte-identical.
+FINGER_TRAVEL_M = 0.05
 
 _STL_CONTENT_TYPE = "stl"
 _GLB_CONTENT_TYPE = "model/gltf-binary"
@@ -155,7 +159,6 @@ def arm_3d_models(model: spatial.Model, include_gripper: bool = False) -> Dict[s
     models: Dict[str, Mesh] = {}
     names = list(model.arm_links)
     if include_gripper:
-        # finger GLBs exist only for DM; on RS the mount body is served and the fingers are skipped
         names += [model.end_link, "finger_left_link", "finger_right_link"]
     for name in names:
         path = model.assets_dir / "models" / f"{name}.glb"
