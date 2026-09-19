@@ -58,13 +58,13 @@ def _mesh_filename(link: str) -> str:
     return f"meshes/{link}.stl"
 
 
-def _read_mesh(model: "spatial.Model", key: str) -> Optional[bytes]:
+def _read_mesh(model: spatial.Model, key: str) -> Optional[bytes]:
     path = model.assets_dir / "meshes" / f"{key}.stl"
     return path.read_bytes() if path.exists() else None
 
 
 def arm_kinematics(
-    model: "spatial.Model",
+    model: spatial.Model,
     mode: str = "primitives",
     include_gripper_geometry: bool = False,
     joint_limits_deg: Optional[Sequence[Tuple[float, float]]] = None,
@@ -128,7 +128,7 @@ def _box_geometry(t_link, center_m: Sequence[float], size_m: Sequence[float], la
 
 
 def arm_geometries(
-    model: "spatial.Model", joint_degs: Sequence[float], include_gripper_geometry: bool = False
+    model: spatial.Model, joint_degs: Sequence[float], include_gripper_geometry: bool = False
 ) -> List[Geometry]:
     """Per-link bounding boxes posed by the current joint state, in the arm's base frame.
 
@@ -140,12 +140,9 @@ def arm_geometries(
     transforms = model.link_transforms(rads)
     out = []
     for idx, name in enumerate(model.link_order):
-        if name != model.end_link:
-            key = name
-        elif include_gripper_geometry:
-            key = model.mount_asset_key
-        else:
+        if name == model.end_link and not include_gripper_geometry:
             continue
+        key = model.mount_asset_key if name == model.end_link else name
         prim = model.primitives.get(key)
         if not prim:
             continue
@@ -153,11 +150,12 @@ def arm_geometries(
     return out
 
 
-def arm_3d_models(model: "spatial.Model", include_gripper: bool = False) -> Dict[str, Mesh]:
+def arm_3d_models(model: spatial.Model, include_gripper: bool = False) -> Dict[str, Mesh]:
     """GLB visual meshes keyed by link name, for the app's 3D view."""
     models: Dict[str, Mesh] = {}
     names = list(model.arm_links)
     if include_gripper:
+        # DM gripper GLBs; absent under assets/rs and skipped
         names += [model.end_link, "finger_left_link", "finger_right_link"]
     for name in names:
         path = model.assets_dir / "models" / f"{name}.glb"
@@ -178,17 +176,19 @@ def gripper_urdf(mode: str = "primitives") -> Tuple[bytes, Dict[str, Mesh]]:
     translation."""
     robot = ET.Element("robot", name="rebot_b601_gripper")
     meshes: Dict[str, Mesh] = {}
+    dm = spatial.MODELS["dm"]
 
     def add_link(name: str, asset: str, widen_y: float = 0.0, shift_y: float = 0.0):
         link = ET.SubElement(robot, "link", name=name)
         if mode == "none":
             return
-        if mode == "meshes" and _read_mesh(spatial.MODELS["dm"], asset) is not None:
+        data = _read_mesh(dm, asset) if mode == "meshes" else None
+        if data is not None:
             filename = _mesh_filename(asset)
             link.append(_collision_mesh(filename))
-            meshes[filename] = Mesh(content_type=_STL_CONTENT_TYPE, mesh=_read_mesh(spatial.MODELS["dm"], asset))
+            meshes[filename] = Mesh(content_type=_STL_CONTENT_TYPE, mesh=data)
             return
-        prim = spatial.MODELS["dm"].primitives.get(asset)
+        prim = dm.primitives.get(asset)
         if prim:
             center = list(prim["center"])
             size = list(prim["size"])
@@ -229,16 +229,17 @@ def gripper_kinematics(mode: str = "primitives"):
 def gripper_geometries(finger_travel_m: float) -> List[Geometry]:
     """Gripper boxes in the gripper's own frame for the given left-finger travel."""
     identity = spatial._transform([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])
+    dm = spatial.MODELS["dm"]
     out = []
-    prim = spatial.MODELS["dm"].primitives.get("gripper_base")
+    prim = dm.primitives.get("gripper_base")
     if prim:
         out.append(_box_geometry(identity, prim["center"], prim["size"], "gripper_base"))
-    prim = spatial.MODELS["dm"].primitives.get("left_finger")
+    prim = dm.primitives.get("left_finger")
     if prim:
         c = list(prim["center"])
         c[1] += finger_travel_m
         out.append(_box_geometry(identity, c, prim["size"], "finger_left_link"))
-    prim = spatial.MODELS["dm"].primitives.get("right_finger")
+    prim = dm.primitives.get("right_finger")
     if prim:
         c = list(prim["center"])
         c[1] -= finger_travel_m

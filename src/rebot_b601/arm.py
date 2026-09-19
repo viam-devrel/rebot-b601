@@ -718,8 +718,10 @@ class B601Arm(Arm, EasyResource):
         return any(abs(s.vel) > self.moving_vel_rad_s for s in states.values() if s is not None)
 
     async def get_kinematics(self, *, extra=None, timeout=None, **kwargs):
-        # The bundled URDF is the DM arm; on RS its joint 2/3 range (-180..0) would make
-        # viam-server reject every target the RS motors can reach. Serve the soft limits.
+        # The RS URDF's joint 2/3 lower bound is 0, but the arm rests about 1 deg below it
+        # and viam-server rejects any target outside the served limits, so serve the soft
+        # limits. DM keeps its URDF limits so its served payload stays byte-identical
+        # (tests/test_dm_baseline.py); serving soft limits on DM too is a deliberate future change.
         limits = self.joint_limits if self.variant == "rs" else None
         return kinematics.arm_kinematics(self.model, self.collision_mode, self.include_gripper_geometry, limits)
 
