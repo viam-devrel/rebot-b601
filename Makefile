@@ -25,7 +25,8 @@ module:
 		meta.json README.md CHANGELOG.md run.sh requirements.txt src
 
 assets:
-	$(PYTHON) tools/build_assets.py
+	$(PYTHON) tools/build_assets.py --variant dm
+	$(PYTHON) tools/build_assets.py --variant rs --source ../reBotArm_control_py/urdf/RS
 
 # Simulate a clean install: copy the tree without .venv and run the entrypoint's self-check.
 check-bootstrap:

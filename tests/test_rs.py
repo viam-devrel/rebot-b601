@@ -377,11 +377,15 @@ def test_dm_manual_torques_clamp_to_the_dm_efforts(factory):
     assert any(abs(t) == e for t, e in zip(taus, spatial.MODELS["dm"].effort_nm) if e)  # the clamp bit
 
 
-def test_missing_primitives_are_warned_about_once_at_configure(factory, caplog):
+def test_missing_primitives_are_warned_about_once_at_configure(factory, caplog, monkeypatch, tmp_path):
     import logging
 
+    # tmp_path holds no primitives.json, so this stands in for a variant whose assets are absent.
+    monkeypatch.setattr(
+        spatial, "MODELS", {**spatial.MODELS, "rs": spatial.Model("rs", spatial.RS_URDF_PATH, tmp_path, "gripper_end")}
+    )
     with caplog.at_level(logging.WARNING, logger="src.rebot_b601.arm"):
-        B601Arm.new(make_config("arm", **RS), {})  # assets/rs does not exist until Task 6
+        B601Arm.new(make_config("arm", **RS), {})
     assert sum(1 for r in caplog.records if "no collision primitives" in r.getMessage()) == 1
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="src.rebot_b601.arm"):
@@ -398,3 +402,10 @@ async def test_rs_gravity_torques_command_reports_but_does_not_apply(factory):
     dm = B601Arm.new(make_config("arm2", **dict(FAST, port="/dev/fake1")), {})
     taus = (await dm.do_command({"gravity_torques": True}))["gravity_torques"]
     assert len(taus) == 6 and all(isinstance(t, float) for t in taus)
+
+
+async def test_rs_geometries_follow_the_rs_model(factory):
+    rs = B601Arm.new(make_config("arm", **RS), {})
+    geos = await rs.get_geometries()
+    assert [g.label for g in geos] == rs.model.arm_links
+    assert geos[2].center.x < 0  # link2's box sits behind the base at the rest pose (upper arm points back)

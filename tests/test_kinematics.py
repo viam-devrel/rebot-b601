@@ -8,9 +8,6 @@ from src.rebot_b601 import kinematics, spatial
 
 DM, RS = spatial.MODELS["dm"], spatial.MODELS["rs"]
 BOTH = [pytest.param(DM, id="dm"), pytest.param(RS, id="rs")]
-# Five cases need assets/rs, which Task 6 builds; strict xfail makes Task 6 remove the marks or fail.
-RS_NEEDS_ASSETS = pytest.param(RS, id="rs", marks=pytest.mark.xfail(strict=True, reason="assets/rs is built in Task 6"))
-BOTH_RS_XFAIL = [pytest.param(DM, id="dm"), RS_NEEDS_ASSETS]
 
 
 def _links_with_collision(urdf: bytes):
@@ -18,7 +15,7 @@ def _links_with_collision(urdf: bytes):
     return {l.get("name") for l in root.findall("link") if l.find("collision") is not None}
 
 
-@pytest.mark.parametrize("model", BOTH_RS_XFAIL)
+@pytest.mark.parametrize("model", BOTH)
 def test_primitives_mode_adds_box_per_arm_link(model):
     fmt, data = kinematics.arm_kinematics(model, "primitives")
     assert fmt == KinematicsFileFormat.KINEMATICS_FILE_FORMAT_URDF
@@ -29,7 +26,7 @@ def test_primitives_mode_adds_box_per_arm_link(model):
     assert box is not None and len(box.get("size").split()) == 3
 
 
-@pytest.mark.parametrize("model", BOTH_RS_XFAIL)
+@pytest.mark.parametrize("model", BOTH)
 def test_meshes_mode_returns_mesh_map_keyed_by_filename(model):
     fmt, data, meshes = kinematics.arm_kinematics(model, "meshes")
     root = ET.fromstring(data)
@@ -43,7 +40,7 @@ def test_none_mode_has_no_collision(model):
     assert _links_with_collision(kinematics.arm_kinematics(model, "none")[1]) == set()
 
 
-@pytest.mark.parametrize("model", BOTH_RS_XFAIL)
+@pytest.mark.parametrize("model", BOTH)
 def test_gripper_geometry_is_opt_in_on_arm(model):
     _, data = kinematics.arm_kinematics(model, "primitives", include_gripper_geometry=True)
     assert "end_link" in _links_with_collision(data)
@@ -67,7 +64,7 @@ def test_rs_served_urdf_has_no_prismatic_joint():
     "model,tol",
     [
         pytest.param(DM, 0.5, id="dm"),
-        pytest.param(RS, 2.2, id="rs", marks=pytest.mark.xfail(strict=True, reason="assets/rs is built in Task 6")),
+        pytest.param(RS, 2.2, id="rs"),
     ],
 )
 def test_arm_geometries_follow_fk(model, tol):
@@ -95,7 +92,7 @@ def test_gripper_urdf_has_one_prismatic_dof():
     assert len(kinematics.gripper_geometries(0.02)) == 3
 
 
-@pytest.mark.parametrize("model", BOTH_RS_XFAIL)
+@pytest.mark.parametrize("model", BOTH)
 def test_3d_models_glb(model):
     models = kinematics.arm_3d_models(model, include_gripper=True)
     assert set(model.arm_links) <= set(models)

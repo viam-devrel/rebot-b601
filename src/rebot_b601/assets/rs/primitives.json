@@ -1,0 +1,362 @@
+{
+  "units": "m",
+  "frame": "URDF link frame (collision <origin> applied)",
+  "bbox_source": "original (undecimated) collision mesh",
+  "variant": "rs",
+  "source_repo": "https://github.com/Seeed-Projects/reBotArm_control_py",
+  "source_commit": "76512eab38ba54f11830e7cdfcba68e11629f902",
+  "source_subdir": "urdf/RS",
+  "unit_scale_applied": 1.0,
+  "unit_note": "source meshes are in metres (largest extent 0.327 m, link2 longest extent 0.327 m)",
+  "links": {
+    "base_link": {
+      "urdf_link": "base_link",
+      "center": [
+        0.0,
+        0.0,
+        0.0375
+      ],
+      "size": [
+        0.14,
+        0.2,
+        0.075
+      ]
+    },
+    "link1": {
+      "urdf_link": "link1",
+      "center": [
+        0.00457,
+        0.000987,
+        0.043492
+      ],
+      "size": [
+        0.086454,
+        0.0865,
+        0.107784
+      ]
+    },
+    "link2": {
+      "urdf_link": "link2",
+      "center": [
+        -0.116365,
+        0.0,
+        -0.02625
+      ],
+      "size": [
+        0.32653,
+        0.088117,
+        0.0655
+      ]
+    },
+    "link3": {
+      "urdf_link": "link3",
+      "center": [
+        0.122044,
+        -0.039623,
+        -0.02625
+      ],
+      "size": [
+        0.293814,
+        0.129246,
+        0.0865
+      ]
+    },
+    "link4": {
+      "urdf_link": "link4",
+      "center": [
+        0.049756,
+        -0.037281,
+        -0.03075
+      ],
+      "size": [
+        0.15639,
+        0.131439,
+        0.0865
+      ]
+    },
+    "link5": {
+      "urdf_link": "link5",
+      "center": [
+        -0.0075,
+        4.9e-05,
+        0.04865
+      ],
+      "size": [
+        0.088,
+        0.081804,
+        0.1037
+      ]
+    },
+    "link6": {
+      "urdf_link": "link6",
+      "center": [
+        0.0,
+        0.0,
+        0.00425
+      ],
+      "size": [
+        0.0568,
+        0.0568,
+        0.0095
+      ]
+    },
+    "gripper_end": {
+      "urdf_link": "end_link",
+      "center": [
+        -0.115209,
+        0.0,
+        -4.9e-05
+      ],
+      "size": [
+        0.084,
+        0.18407,
+        0.081804
+      ]
+    }
+  },
+  "triangles": {
+    "base_link": {
+      "original": 81816,
+      "decimated": 3062
+    },
+    "link1": {
+      "original": 31640,
+      "decimated": 3062
+    },
+    "link2": {
+      "original": 129550,
+      "decimated": 3062
+    },
+    "link3": {
+      "original": 164258,
+      "decimated": 3062
+    },
+    "link4": {
+      "original": 103580,
+      "decimated": 3062
+    },
+    "link5": {
+      "original": 80866,
+      "decimated": 3062
+    },
+    "link6": {
+      "original": 24498,
+      "decimated": 3062
+    },
+    "gripper_end": {
+      "original": 80756,
+      "decimated": 3062
+    }
+  },
+  "decimation": {
+    "base_link": "quadric",
+    "link1": "quadric",
+    "link2": "quadric",
+    "link3": "quadric",
+    "link4": "quadric",
+    "link5": "quadric",
+    "link6": "quadric",
+    "gripper_end": "quadric"
+  },
+  "visual_models": {
+    "base_link": {
+      "faces_original": 81816,
+      "faces_decimated": 10970,
+      "methods": {
+        "base_link": "quadric"
+      },
+      "parts": {
+        "base_link": {
+          "source": "meshes/shared/base_link.STL",
+          "color": "#0E110F",
+          "urdf_material": "rs_base_black"
+        }
+      },
+      "bytes": 198068
+    },
+    "link1": {
+      "faces_original": 31640,
+      "faces_decimated": 10971,
+      "methods": {
+        "link1": "quadric"
+      },
+      "parts": {
+        "link1": {
+          "source": "meshes/shared/link1.STL",
+          "color": "#B8C2BA",
+          "urdf_material": "rs_anodized_silver"
+        }
+      },
+      "bytes": 197524
+    },
+    "link2": {
+      "faces_original": 129550,
+      "faces_decimated": 12160,
+      "methods": {
+        "motor_2_3": "quadric",
+        "cnc2": "quadric",
+        "pla2_black": "quadric",
+        "pla2_green": "quadric"
+      },
+      "parts": {
+        "motor_2_3": {
+          "source": "meshes/visual/motor_2_3.STL",
+          "color": "#0B0D0C",
+          "urdf_material": "rs_motor_black"
+        },
+        "cnc2": {
+          "source": "meshes/visual/cnc2.STL",
+          "color": "#B8C2BA",
+          "urdf_material": "rs_anodized_silver"
+        },
+        "pla2_black": {
+          "source": "meshes/visual/pla2_black.STL",
+          "color": "#171B1A",
+          "urdf_material": "rs_pla_black"
+        },
+        "pla2_green": {
+          "source": "meshes/visual/pla2_green.STL",
+          "color": "#B9D51E",
+          "urdf_material": "rs_seeed_green"
+        }
+      },
+      "bytes": 220780
+    },
+    "link3": {
+      "faces_original": 164658,
+      "faces_decimated": 11666,
+      "methods": {
+        "cnc3": "quadric",
+        "motor_4": "quadric",
+        "pla3_black_without_seeed_badge": "quadric",
+        "pla3_seeed_badge_with_counters": "quadric",
+        "pla3_seeed_wordmark_backing": "quadric",
+        "pla3_green": "quadric"
+      },
+      "parts": {
+        "cnc3": {
+          "source": "meshes/visual/cnc3.STL",
+          "color": "#B8C2BA",
+          "urdf_material": "rs_anodized_silver"
+        },
+        "motor_4": {
+          "source": "meshes/visual/motor_4.STL",
+          "color": "#0B0D0C",
+          "urdf_material": "rs_motor_black"
+        },
+        "pla3_black_without_seeed_badge": {
+          "source": "meshes/visual/pla3_black_without_seeed_badge.STL",
+          "color": "#171B1A",
+          "urdf_material": "rs_pla_black"
+        },
+        "pla3_seeed_badge_with_counters": {
+          "source": "meshes/visual/pla3_seeed_badge_with_counters.STL",
+          "color": "#B9D51E",
+          "urdf_material": "rs_seeed_green"
+        },
+        "pla3_seeed_wordmark_backing": {
+          "source": "meshes/visual/pla3_seeed_wordmark_backing.STL",
+          "color": "#030303",
+          "urdf_material": "rs_wordmark_black"
+        },
+        "pla3_green": {
+          "source": "meshes/visual/pla3_green.STL",
+          "color": "#B9D51E",
+          "urdf_material": "rs_seeed_green"
+        }
+      },
+      "bytes": 214100
+    },
+    "link4": {
+      "faces_original": 104034,
+      "faces_decimated": 10969,
+      "methods": {
+        "motor_5": "quadric",
+        "cnc4": "quadric"
+      },
+      "parts": {
+        "motor_5": {
+          "source": "meshes/visual/motor_5.STL",
+          "color": "#0B0D0C",
+          "urdf_material": "rs_motor_black"
+        },
+        "cnc4": {
+          "source": "meshes/visual/cnc4.STL",
+          "color": "#B8C2BA",
+          "urdf_material": "rs_anodized_silver"
+        }
+      },
+      "bytes": 199912
+    },
+    "link5": {
+      "faces_original": 80866,
+      "faces_decimated": 11088,
+      "methods": {
+        "motor_6": "quadric",
+        "cnc5": "quadric",
+        "pla5_green": "quadric"
+      },
+      "parts": {
+        "motor_6": {
+          "source": "meshes/visual/motor_6.STL",
+          "color": "#0B0D0C",
+          "urdf_material": "rs_motor_black"
+        },
+        "cnc5": {
+          "source": "meshes/visual/cnc5.STL",
+          "color": "#B8C2BA",
+          "urdf_material": "rs_anodized_silver"
+        },
+        "pla5_green": {
+          "source": "meshes/visual/pla5_green.STL",
+          "color": "#B9D51E",
+          "urdf_material": "rs_seeed_green"
+        }
+      },
+      "bytes": 204276
+    },
+    "link6": {
+      "faces_original": 24498,
+      "faces_decimated": 10970,
+      "methods": {
+        "link6": "quadric"
+      },
+      "parts": {
+        "link6": {
+          "source": "meshes/shared/link6.STL",
+          "color": "#0B0D0C",
+          "urdf_material": "rs_motor_black"
+        }
+      },
+      "bytes": 198048
+    },
+    "end_link": {
+      "faces_original": 80756,
+      "faces_decimated": 10968,
+      "methods": {
+        "pla7_green": "quadric",
+        "cnc7": "quadric",
+        "motor_7": "quadric"
+      },
+      "parts": {
+        "pla7_green": {
+          "source": "meshes/visual/pla7_green.STL",
+          "color": "#B9D51E",
+          "urdf_material": "rs_seeed_green"
+        },
+        "cnc7": {
+          "source": "meshes/visual/cnc7.STL",
+          "color": "#B8C2BA",
+          "urdf_material": "rs_anodized_silver"
+        },
+        "motor_7": {
+          "source": "meshes/visual/motor_7.STL",
+          "color": "#0B0D0C",
+          "urdf_material": "rs_motor_black"
+        }
+      },
+      "bytes": 201892
+    }
+  },
+  "skipped_visual_meshes": []
+}
