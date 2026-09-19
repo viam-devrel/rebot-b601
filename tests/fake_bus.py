@@ -50,6 +50,10 @@ class FakeMotor:
         self.active_report = False  # RobStride: status frames stream only when this is on
         self.stream_state = True  # False: get_state() never fills, only param reads work
         self.param_reads = 0
+        # RobStride RW parameters the module writes: limit_spd (rad/s) and limit_cur (A).
+        # The limit_cur value stands in for the motor's factory current limit.
+        self.params: Dict[int, float] = {0x7017: 5.0, 0x7018: 4.0}
+        self.param_writes: List[tuple] = []
         self._frozen = None  # RobStride: the last frame, served after disable() like the real cache
 
     # --- motorbridge.Motor API ---
@@ -155,7 +159,14 @@ class FakeMotor:
         if param_id == 0x7019:  # mechPos, rad
             self.step()
             return self.pos
+        if param_id in self.params:
+            return self.params[param_id]
         raise CallError(f"param 0x{param_id:04x} read timed out")
+
+    def robstride_write_param_f32(self, param_id: int, value: float) -> None:
+        self.controller._check_link()
+        self.param_writes.append((param_id, float(value)))
+        self.params[param_id] = float(value)
 
     # --- simulation ---
     def step(self):

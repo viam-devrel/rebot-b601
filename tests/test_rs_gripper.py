@@ -5,7 +5,14 @@ import time
 import pytest
 
 from src.rebot_b601 import spatial
-from src.rebot_b601.gripper import GRIPPER_CAN_ID, B601Gripper
+from src.rebot_b601.gripper import (
+    DEFAULT_TORQUE_RATIO,
+    GRIPPER_CAN_ID,
+    RS_RID_LIMIT_CUR,
+    RS_RID_LIMIT_SPD,
+    RS_TORQUE_RATIO,
+    B601Gripper,
+)
 from tests.conftest import make_config
 
 RS = dict(variant="rs", port="can0", open_position_deg=-120.0)
@@ -48,12 +55,45 @@ def test_rs_travel_uses_the_rs_spec(rs_gripper):
     assert g.travel_m_from_deg(g.closed_deg) == pytest.approx(0.0)
 
 
-def test_torque_ratio_on_rs_warns_and_is_ignored(factory, caplog):
-    import logging
+def test_rs_holds_its_current_position_at_configure(rs_gripper):
+    """Profile position resumes a stale internal setpoint after a restart, so configure has to
+    command where the jaws already are or they lurch."""
+    g, motor = rs_gripper
+    motor.pos, motor.target = math.radians(-55.0), None  # moved by hand while the module was down
+    motor.commands.clear()
+    g._configure_motor()
+    kind, pos, _ = motor.commands[-1]
+    assert kind == "pos_vel"
+    assert pos == pytest.approx(math.radians(-55.0))
 
-    with caplog.at_level(logging.WARNING, logger="src.rebot_b601.gripper"):
-        B601Gripper.new(make_config("gripper", **RS, torque_ratio=0.5), {})
-    assert any("torque_ratio" in r.getMessage() for r in caplog.records)
+
+def test_dm_does_not_command_a_hold_at_configure(gripper):
+    g, motor = gripper
+    motor.commands.clear()
+    g._configure_motor()
+    assert motor.commands == []
+
+
+async def test_rs_writes_limit_spd_at_configure_and_on_set_speed(rs_gripper):
+    """RobStride takes its speed cap from limit_spd (0x7017), not from the send_pos_vel field."""
+    g, motor = rs_gripper
+    assert motor.params[RS_RID_LIMIT_SPD] == pytest.approx(math.radians(g.speed_deg_s))
+    assert RS_RID_LIMIT_SPD in [rid for rid, _ in motor.param_writes]
+    await g.do_command({"set_speed": 100.0})
+    assert motor.params[RS_RID_LIMIT_SPD] == pytest.approx(math.radians(100.0))
+
+
+def test_rs_caps_limit_cur_at_ratio_times_the_factory_value(factory):
+    g = B601Gripper.new(make_config("gripper", **RS, torque_ratio=0.5), {})
+    motor = factory.latest.motors[GRIPPER_CAN_ID]
+    assert motor.params[RS_RID_LIMIT_CUR] == pytest.approx(0.5 * 4.0)  # fake factory limit is 4 A
+    assert g.torque_ratio == 0.5
+
+
+def test_rs_default_torque_ratio_is_its_own(rs_gripper):
+    g, motor = rs_gripper
+    assert g.torque_ratio == RS_TORQUE_RATIO != DEFAULT_TORQUE_RATIO
+    assert motor.params[RS_RID_LIMIT_CUR] == pytest.approx(RS_TORQUE_RATIO * 4.0)
 
 
 async def test_rs_moves_send_profile_position_not_force_pos(rs_gripper):
@@ -125,3 +165,22 @@ async def test_force_commands_refuse_on_rs(rs_gripper, cmd):
 async def test_force_commands_still_work_on_dm(gripper):
     g, _ = gripper
     assert (await g.do_command({"set_force": 0.5}))["set_force"] == 0.5
+
+
+async def test_rs_recommands_the_position_the_jaws_reached_after_a_stall(rs_gripper):
+    """Left driving at an unreachable target, profile position grinds into the object until the
+    motor faults. The last frame must ask for where the jaws actually stopped."""
+    g, motor = rs_gripper
+    motor.pos = math.radians(g.open_deg)
+    motor.stall_at = math.radians(-20.0)  # an object stops the jaws short of closed
+    await g.grab()
+    kind, pos, _ = motor.commands[-1]
+    assert kind == "pos_vel"
+    assert math.degrees(pos) == pytest.approx(-20.0, abs=1.0)
+    assert math.degrees(pos) != pytest.approx(g.closed_deg, abs=1.0)
+
+
+async def test_rs_does_not_recommand_when_the_jaws_arrive(rs_gripper):
+    g, motor = rs_gripper
+    await g.open()
+    assert motor.commands[-1][1] == pytest.approx(math.radians(g.open_deg))

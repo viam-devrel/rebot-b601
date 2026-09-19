@@ -145,7 +145,7 @@ The arm's model carries no tool geometry: a tool with no gripper component of it
 | `open_position_deg` | number | dm `-270`; rs **required** | Motor angle when fully open. There is no RS default: it depends on where the jaws sat when the motor was zeroed, so measure it (see below) |
 | `closed_position_deg` | number | `0` | Motor angle when fully closed |
 | `speed_deg_s` | number | dm `900`; rs `286.5` (5 rad/s, the vendor's limit) | Gripper motor speed, deg/s. `set_speed` clamps to 10–3000 |
-| `torque_ratio` | number | `0.07` | Max grip force, `(0, 1]`. dm only; accepted on rs but ignored, with a warning |
+| `torque_ratio` | number | dm `0.07`; rs `0.3` | Max grip force, `(0, 1]`. dm: a fraction of rated torque, in `FORCE_POS`. rs: a fraction of the motor's factory current limit, written to `limit_cur` at configure. The two scale different quantities, hence the different defaults |
 | `holding_threshold_deg` | number | `15` | Stall distance from fully closed that counts as "holding something". dm only |
 | `stall_polls` | int | `4` | Consecutive no-motion polls (at 20 Hz) that count as settled: dm near-zero velocity, rs a position change under 0.5° |
 | `move_timeout_s` | number | `6` | Give up waiting for a grab/open after this long |
@@ -154,8 +154,22 @@ The arm's model carries no tool geometry: a tool with no gripper component of it
 
 On the **B601-RS** the gripper is the same motor address, `0x07`, but a RobStride rs-00. RobStride has
 no force-limited position mode, so the module runs it in profile position (`POS_VEL`) instead of DM's
-`FORCE_POS`: `speed_deg_s` is a velocity limit and the firmware current limit is the only squeeze
-ceiling. Two attributes are required. `port` is required because the `arm` dependency is a gRPC client
+`FORCE_POS`. Both limits live in motor parameters rather than in the command frame, so the module
+writes them at configure (and `limit_spd` again on `set_speed`):
+
+| Parameter | RID | Set from |
+|---|---|---|
+| `limit_spd` | `0x7017` | `speed_deg_s`, in rad/s |
+| `limit_cur` | `0x7018` | `torque_ratio` × the motor's factory `limit_cur`, read back before it is narrowed |
+
+`limit_cur` caps the squeeze, so the jaws stall against a semi-stiff object instead of crushing it and
+driving on until the motor faults. Its RID is inferred from the standard RobStride parameter table
+(Seeed's stack confirms its neighbours `0x7017`, `0x701E`-`0x7020`, and this module already uses
+`0x7019`), so the module reads the value back after writing and logs both — a mismatch is logged as a
+warning saying grip force is **not** capped. Once a move ends short of its target the module
+re-commands the angle the jaws actually reached, so a stalled jaw holds rather than grinds.
+
+Two attributes are required. `port` is required because the `arm` dependency is a gRPC client
 under viam-server and cannot hand over the local bus. `open_position_deg` is required because nothing
 records it for the B601-RS and it depends on where the jaws sat when the motor was zeroed; find it with
 
@@ -165,10 +179,26 @@ tests/smoke_hardware.py --variant rs --port can0 --gripper
 
 which jogs motor `0x07` by a signed step you type, unclamped, until the jaws reach their own hard stop —
 that reading is `open_position_deg`. Consequences of the missing force signal: `set_force`, `get_force`
-and `grab_with_force` (and their `torque` aliases) are refused with an explanation, and `grab` always
-returns `False`, because deciding that the jaws are holding something needs a force signal RS does not
-provide. Moves still settle: RS status velocity is not a measurement (a resting motor reads -0.15 rad/s),
-so settling is judged by the position not changing rather than by velocity.
+and `grab_with_force` (and their `torque` aliases) are refused with an explanation (grip force is set by
+the `torque_ratio` attribute at configure and cannot be changed live), and `grab` always returns `False`,
+because deciding that the jaws are holding something needs a force signal RS does not provide. Moves
+still settle: RS status velocity is not a measurement (a resting motor reads -0.15 rad/s), so settling is
+judged by the position not changing rather than by velocity.
+
+If the gripper does jam hard enough to latch a fault — a HALL encoder fault is the one seen on the
+bench — every move is refused with `gripper (0x07) reports HALL encoder fault; fix the cause, then send
+{"clear_errors": true} to this gripper`, and `{"status": true}` carries the same hint. Clear the jam,
+then send that DoCommand **to the gripper component** (not the arm); it clears the fault and
+reconfigures the motor. Nothing clears it automatically: a latched fault means something physical
+needs attention first.
+
+```json
+{"clear_errors": true}
+```
+
+At configure the module also reads the jaw position before enabling the motor and immediately commands
+it, so a restart holds where the jaws are. Without it a RobStride in profile position resumes whatever
+setpoint it last held and the jaw lurches.
 
 ## Motion
 

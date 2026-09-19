@@ -23,7 +23,10 @@
 - Settling is judged by variant: DM by near-zero velocity, RS by the position not changing (RS status
   velocity is not a measurement; a resting motor reads -0.15 rad/s). `stall_polls` counts either.
 - The RS gripper's default `speed_deg_s` is 286.5 (5 rad/s, the vendor's limit) instead of DM's 900.
-- `torque_ratio` is accepted on RS and ignored, with a warning at configure.
+- `torque_ratio` now caps grip force on RS too, through the motor's `limit_cur` parameter
+  (RID `0x7018`) rather than DM's `FORCE_POS` torque ratio: the module reads the motor's factory
+  `limit_cur` at configure and writes `torque_ratio x factory`. The two ratios scale different
+  quantities, so the RS default is 0.3 against DM's 0.07. The "ignored on RS" warning is gone.
 - The arm's served kinematic model ends at the tool mount, `link6`, where a tool bolts on. It used to
   run one fixed joint further, to the mount plate (`end_link`), which sits 155 mm (DM) / 166 mm (RS)
   past `link6`, beyond any hardware. The mount plate stays in the bundled URDF for its mass and its
@@ -48,6 +51,27 @@
   which is the idiomatic Viam answer.
 
 ### Fixed
+- The RS jaw no longer lurches when the resource starts or restarts. Configure enabled the motor and
+  set the mode but never commanded a target, and a RobStride in profile position resumes its last
+  internal setpoint, which after a restart is stale. It now reads the jaw position before enabling and
+  commands exactly that, so the motor holds where it already is.
+- `speed_deg_s` now takes effect on RS. RobStride reads its speed limit from the `limit_spd` parameter
+  (RID `0x7017`, rad/s), not from the second field of the profile-position frame, as Seeed's reference
+  stack shows. The module writes it at configure and again on `set_speed`, and still passes the value in
+  the frame for any firmware that does honour it.
+- The RS jaw no longer crushes semi-stiff objects, nor grinds itself into a HALL encoder fault. Two
+  causes: nothing capped the motor current (now `limit_cur`, above), and `_move_until_settled` returned
+  after detecting a stall while leaving the motor driving at a target it could not reach. A move that
+  ends short of its target now re-commands the angle the jaws actually reached. DM is unchanged there:
+  `FORCE_POS` caps the current by design and that standing push is how a DM grab keeps its grip.
+- `limit_cur`'s RID is inferred, not proven. Seeed's stack confirms only its neighbours in the standard
+  RobStride parameter table (`0x7017` limit_spd, `0x701E`-`0x7020` the gains) and this module already
+  uses `0x7019` mechPos; motorbridge's native library lists `limit_cur` in the same position. So the
+  module reads the value back after writing and logs what it wrote and what came back, warns if they
+  disagree, and carries on uncapped rather than failing to build if the parameter does not exist.
+- A latched gripper fault is easier to get out of: the `{"clear_errors": true}` hint now names the
+  gripper component, `{"status": true}` carries the same hint when a fault is present, and the README's
+  RS gripper section spells the command out. The recovery path itself is unchanged and still manual.
 - The RS meshes no longer arrive as floating shards. `tools/build_assets.py` decimated each part as one
   mesh, and because the source STLs store unshared vertices there was no edge to collapse, so the
   simplifier deleted triangles instead: `rs/meshes/link2.stl` was 3062 faces in 2762 loose pieces whose
@@ -65,8 +89,9 @@
   served URDF payloads are unchanged.
 
 ### Not yet on RS
-- Force control: `set_force`/`get_force`, `grab_with_force` and their `torque` aliases are refused with
-  an explanation. There is no torque ratio to set.
+- Live force control: `set_force`/`get_force`, `grab_with_force` and their `torque` aliases are refused
+  with an explanation. Grip force is capped by the `torque_ratio` attribute at configure, through
+  `limit_cur`, and cannot be changed per call.
 - Holding detection: `grab` returns `False` and `is_holding_something` reports false. Deciding that the
   jaws hold something needs a force signal RS does not provide, and a threshold tuned on hardware.
 - Discovery still finds DM boards only.
