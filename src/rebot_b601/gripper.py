@@ -2,13 +2,15 @@
 
 The gripper motor drives a leadscrew, so its native "position" is motor
 rotation in degrees: 0 deg is fully closed (the calibration pose) and the fully
-open angle is negative -- about -270 deg on the B601-DM, and whatever
-``open_position_deg`` measures on the B601-RS.
+open angle is whatever ``open_position_deg`` says: about -270 deg on the
+B601-DM and +340 deg on the B601-RS, both measured from a zero set with the
+jaws closed.
 
 The B601-DM runs in FORCE_POS mode, so grab force is capped by a torque ratio
 and the jaws stall gently on an object. RobStride has no force-limited position
-mode, so the B601-RS runs in profile position (POS_VEL) instead, where the speed
-comes from the ``limit_spd`` parameter and grip force is capped by ``limit_cur``,
+mode, so the B601-RS runs in profile position (POS_VEL, RobStride's native mode 2,
+PP) instead, where the speed is the per-command ``vel_max`` of the dedicated
+``robstride_send_pos_vel_pp`` frame and grip force is capped by ``limit_cur``,
 an absolute current limit set by the ``grip_current_a`` attribute. That is a
 different knob from DM's ``torque_ratio``, not the same one in other units, so
 RS has its own attribute and ignores ``torque_ratio``. Force commands and
@@ -54,16 +56,33 @@ LOGGER = getLogger(__name__)
 GRIPPER_CAN_ID = 0x07
 
 DEFAULT_OPEN_DEG = -270.0
+# RS: measured on the bench by jogging the jaw from closed to its hard stop. It is only correct
+# if the motor was zeroed with the jaws closed -- the procedure in the README -- so the value in
+# use is logged at configure: a wrong one misreports finger travel silently instead of failing.
+RS_OPEN_DEG = 340.0
 DEFAULT_CLOSED_DEG = 0.0
+MAX_OPEN_TRAVEL_DEG = 1440.0  # four motor turns; the measured jaw travel is 270 (DM) / 340 (RS)
 DEFAULT_SPEED_DEG_S = 900.0
 RS_SPEED_DEG_S = math.degrees(5.0)  # the vendor's vlim for the gripper; DM's is DEFAULT_SPEED_DEG_S
 MIN_SPEED_DEG_S = 10.0
-MAX_SPEED_DEG_S = 3000.0
+MAX_SPEED_DEG_S = 3000.0  # DM's fast leadscrew, whose default is 900
+# RS needs its own ceiling: 3000 deg/s is 52 rad/s, an order of magnitude past anything an rs-00
+# does, so DM's bound caps nothing there and a config near the top of it (the bench ran 3000) is
+# nonsense that nothing would have questioned. Seeed's reference vlim for this gripper is 5 rad/s,
+# so allow twice that: headroom above the vendor figure without pretending a speed the motor
+# cannot reach is configurable.
+RS_MAX_SPEED_DEG_S = math.degrees(10.0)
+# RobStride's PP frame carries an acceleration as well as vel_max. Derived from the speed rather
+# than configured: acc = speed / RS_ACC_RAMP_S, so the jaw reaches whatever rate was asked for in
+# RS_ACC_RAMP_S seconds. 0.1 s is under a tenth of a full-travel move (340 deg at the vendor's
+# 5 rad/s takes ~1.2 s), so it is still a ramp rather than a step. It becomes an attribute only
+# if the bench asks for one.
+RS_ACC_RAMP_S = 0.1
 DEFAULT_TORQUE_RATIO = 0.07  # DM: max grip force in [0, 1], a fraction of the motor's rated torque
-# RS: the absolute grip current cap in amps, written to limit_cur. 1.0 A is a guess, not a figure
-# derived from anything: it is conservative for a small rs-00 and errs toward a jaw too weak to
-# close, which fails visibly and safely rather than crushing. The "was X A" line logged at
-# configure reports the motor's own limit, so it can be tuned from evidence on the first run.
+# RS: the absolute grip current cap in amps, written to limit_cur. 1.0 A is bench-validated on a
+# B601-RS against the motor's 16 A factory limit (1, 4, 5, 10 and 16 A were all tried): at 1.0 A
+# the jaw closes on a cardboard box and holds it without crushing it. The "was X A" line logged
+# at configure still reports the motor's own limit, so it can be retuned from evidence.
 DEFAULT_GRIP_CURRENT_A = 1.0
 # If the gripper stalls at least this far (deg of motor rotation) short of the
 # fully-closed position, we consider it to be holding something.
@@ -146,15 +165,20 @@ class B601Gripper(Gripper, EasyResource):
                     'or "PCAN_USBBUS1" (macOS PCAN). The arm dependency cannot supply it: under '
                     "viam-server that dependency is a gRPC client, not the local arm object"
                 )
-            if "open_position_deg" not in attrs:  # not `not attrs.get(...)`: 0 is a legal angle
-                raise ValueError(
-                    "variant 'rs' needs 'open_position_deg': the motor angle at the fully open "
-                    "jaw, in degrees from the closed zero. Nothing records it for the B601-RS and "
-                    "it depends on where the jaws sat when the motor was zeroed, so measure it "
-                    "with: tests/smoke_hardware.py --variant rs --port <chan> --gripper"
-                )
             if float(attrs.get("grip_current_a", DEFAULT_GRIP_CURRENT_A)) <= 0.0:
                 raise ValueError("grip_current_a must be greater than 0 (amps)")
+        # The open angle only means anything as a span from the closed one, and a zero or absurd
+        # span misreports finger travel silently rather than failing, so reject it here.
+        span = abs(
+            float(attrs.get("open_position_deg", RS_OPEN_DEG if variant == "rs" else DEFAULT_OPEN_DEG))
+            - float(attrs.get("closed_position_deg", DEFAULT_CLOSED_DEG))
+        )
+        if not 0.0 < span <= MAX_OPEN_TRAVEL_DEG:
+            raise ValueError(
+                "open_position_deg must be a usable jaw angle: the motor angle at the fully open "
+                "jaw, in degrees from closed_position_deg, differing from it by more than 0 and "
+                f"at most {MAX_OPEN_TRAVEL_DEG:.0f} deg"
+            )
         ratio = float(attrs.get("torque_ratio", DEFAULT_TORQUE_RATIO))
         if not 0.0 < ratio <= 1.0:
             raise ValueError("torque_ratio must be in (0, 1]")
@@ -190,9 +214,19 @@ class B601Gripper(Gripper, EasyResource):
                 f"open for {bus_vendor} motors; set the gripper's 'variant' to match the arm"
             )
 
-        self.open_deg = float(attrs.get("open_position_deg", DEFAULT_OPEN_DEG))
+        self.open_deg = float(attrs.get("open_position_deg", RS_OPEN_DEG if rs else DEFAULT_OPEN_DEG))
         self.closed_deg = float(attrs.get("closed_position_deg", DEFAULT_CLOSED_DEG))
-        self.speed_deg_s = float(attrs.get("speed_deg_s", RS_SPEED_DEG_S if rs else DEFAULT_SPEED_DEG_S))
+        self.speed_deg_s = self._clamp_speed(
+            float(attrs.get("speed_deg_s", RS_SPEED_DEG_S if rs else DEFAULT_SPEED_DEG_S))
+        )
+        if rs:
+            LOGGER.info(
+                "gripper open_position_deg is %.1f deg (%s), closed %.1f: correct only if motor "
+                "0x07 was zeroed with the jaws closed",
+                self.open_deg,
+                "configured" if "open_position_deg" in attrs else "bench-measured default",
+                self.closed_deg,
+            )
         self.torque_ratio = float(attrs.get("torque_ratio", DEFAULT_TORQUE_RATIO))
         self.grip_current_a = float(attrs.get("grip_current_a", DEFAULT_GRIP_CURRENT_A))
         if rs and "torque_ratio" in attrs:
@@ -244,21 +278,42 @@ class B601Gripper(Gripper, EasyResource):
             except Exception:
                 LOGGER.warning("failed to restore gripper motor after reconnect", exc_info=True)
 
-    def _read_limit_cur(self, motor) -> float:
+    def _read_param(self, motor, rid: int) -> float:
         """Diagnostic only. Nothing is computed from this, so a failed read is not fatal: it
-        returns nan, which the read-back check below treats as a mismatch."""
+        returns nan, which the read-back checks below treat as a mismatch."""
         try:
-            return float(motor.robstride_get_param_f32(RS_RID_LIMIT_CUR))
+            return float(motor.robstride_get_param_f32(rid))
         except Exception:
             return float("nan")
 
     def _write_rs_limits(self, motor):
-        """RobStride takes its speed cap from the limit_spd parameter and its squeeze ceiling
-        from limit_cur; neither is carried by the send_pos_vel frame. limit_cur is written as
-        an absolute current, never derived from what the motor already holds: deriving it would
-        mean re-reading a value we wrote ourselves, and every restart would ratchet the cap down."""
-        motor.robstride_write_param_f32(RS_RID_LIMIT_SPD, math.radians(self.speed_deg_s))
-        was = self._read_limit_cur(motor)
+        """RobStride's squeeze ceiling is the limit_cur parameter, which no command frame carries.
+        limit_spd is written too, as Seeed's stack does, but the bench found speed_deg_s from 10 to
+        200 deg/s making no visible difference, so in profile position the governing speed is
+        probably the PP frame's per-command vel_max and not this parameter (see _send_target).
+        Writing it is harmless and it is read back, so if it does matter it is set and visible.
+
+        limit_cur is written as an absolute current, never derived from what the motor already
+        holds: deriving it would mean re-reading a value we wrote ourselves, and every restart
+        would ratchet the cap down."""
+        spd = math.radians(self.speed_deg_s)
+        motor.robstride_write_param_f32(RS_RID_LIMIT_SPD, spd)
+        got_spd = self._read_param(motor, RS_RID_LIMIT_SPD)
+        LOGGER.info(
+            "gripper limit_spd (RID 0x%04X) set to %.3f rad/s (%.1f deg/s) from speed_deg_s, read back %.3f rad/s",
+            RS_RID_LIMIT_SPD,
+            spd,
+            self.speed_deg_s,
+            got_spd,
+        )
+        if not abs(got_spd - spd) <= max(0.05, 0.02 * spd):
+            LOGGER.warning(
+                "gripper limit_spd read back %.3f rad/s, not the %.3f rad/s written: the speed "
+                "cap did not land, so speed_deg_s may be doing nothing",
+                got_spd,
+                spd,
+            )
+        was = self._read_param(motor, RS_RID_LIMIT_CUR)
         try:
             motor.robstride_write_param_f32(RS_RID_LIMIT_CUR, self.grip_current_a)
         except Exception:
@@ -270,7 +325,7 @@ class B601Gripper(Gripper, EasyResource):
                 exc_info=True,
             )
             return
-        got = self._read_limit_cur(motor)
+        got = self._read_param(motor, RS_RID_LIMIT_CUR)
         LOGGER.info(
             "gripper limit_cur (RID 0x%04X) was %.3f A (informational only), set to %.3f A from "
             "grip_current_a, read back %.3f A",
@@ -322,7 +377,7 @@ class B601Gripper(Gripper, EasyResource):
                     motor.robstride_set_active_report(True)
                     self._write_rs_limits(motor)
                     if hold is not None:
-                        motor.send_pos_vel(hold.pos, math.radians(self.speed_deg_s))
+                        self._rs_send(motor, hold.pos, math.radians(self.speed_deg_s))
                     else:
                         LOGGER.warning(
                             "gripper position unreadable at configure; the motor keeps whatever "
@@ -377,11 +432,40 @@ class B601Gripper(Gripper, EasyResource):
                 if self.variant == "rs":
                     # RobStride has no FORCE_POS; profile position keeps speed meaningful and
                     # leaves the firmware current limit as the only squeeze ceiling.
-                    motor.send_pos_vel(math.radians(target_deg), math.radians(speed))
+                    self._rs_send(motor, math.radians(target_deg), math.radians(speed))
                 else:
                     motor.send_force_pos(math.radians(target_deg), math.radians(speed), ratio)
 
         self._bus_call(_do)
+
+    def _rs_send(self, motor, pos_rad: float, speed_rad_s: float):
+        """The dedicated profile-position frame, not the generic send_pos_vel one.
+
+        Mode.POS_VEL on a RobStride already *is* native mode 2 (PP), so this matches the send to
+        the mode we selected rather than changing modes. It matters because PP takes vel_max per
+        command, and the generic frame has nowhere to put it: on the bench 2026-09-19 speed_deg_s
+        at 10, 60, 100 and 200 deg/s all moved the jaw at the same rate through send_pos_vel.
+        That the dedicated call carries vel_max is fact; that it is why speed did nothing is a
+        hypothesis only hardware can confirm -- tests/smoke_hardware.py --gripper alternates the
+        two send paths so a bench run can tell them apart.
+        """
+        motor.robstride_send_pos_vel_pp(pos_rad, speed_rad_s, speed_rad_s / RS_ACC_RAMP_S)
+
+    def _clamp_speed(self, speed_deg_s: float) -> float:
+        """The ceiling is per variant: see RS_MAX_SPEED_DEG_S. Applied to the configured value as
+        well as to set_speed, so a nonsense config attribute is visible rather than silent."""
+        hi = RS_MAX_SPEED_DEG_S if self.variant == "rs" else MAX_SPEED_DEG_S
+        speed = max(MIN_SPEED_DEG_S, min(hi, float(speed_deg_s)))
+        if speed != float(speed_deg_s):
+            LOGGER.warning(
+                "gripper speed_deg_s %.1f is outside the %s range %.1f-%.1f deg/s; clamped to %.1f",
+                float(speed_deg_s),
+                self.variant,
+                MIN_SPEED_DEG_S,
+                hi,
+                speed,
+            )
+        return speed
 
     def _clamp_deg(self, target_deg: float) -> float:
         lo, hi = min(self.open_deg, self.closed_deg), max(self.open_deg, self.closed_deg)
@@ -580,9 +664,10 @@ class B601Gripper(Gripper, EasyResource):
                 pos = await asyncio.to_thread(self._move_until_settled, target)
                 result[name] = {"pos_deg": pos, "open_fraction": self.fraction_from_deg(pos)}
             elif name in ("set_speed", "set_gripper_speed"):
-                self.speed_deg_s = max(MIN_SPEED_DEG_S, min(MAX_SPEED_DEG_S, float(arg)))
+                self.speed_deg_s = self._clamp_speed(float(arg))
                 if self.variant == "rs":
-                    # RobStride reads its speed cap from limit_spd, not from the send_pos_vel field.
+                    # limit_spd is a parameter, not a command field, so a live change needs a write.
+                    # The profile-position frames that follow carry the new speed as vel_max anyway.
                     def _limits():
                         with self.bus.lock:
                             self._write_rs_limits(self.bus.motor(GRIPPER_CAN_ID))

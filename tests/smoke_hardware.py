@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.rebot_b601 import spatial  # noqa: E402
 from src.rebot_b601.bus import VARIANT_VENDOR, BusError, SharedBus, detect_port  # noqa: E402
 from src.rebot_b601.damiao import JointHealth  # noqa: E402
+from src.rebot_b601.gripper import RS_ACC_RAMP_S  # noqa: E402
 
 NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "gripper"]
 
@@ -57,7 +58,16 @@ ap.add_argument(
     "--gripper",
     action="store_true",
     help="MOVES THE GRIPPER: jog motor 0x07 by a step you type and print its position, to find "
-    "open_position_deg (stop viam-server first; the CAN channel cannot be shared)",
+    "open_position_deg (stop viam-server first; the CAN channel cannot be shared). On rs each "
+    "step alternates the two send paths, pp and generic, so the printed distance covered in the "
+    "same half second shows which one honours --gripper-speed",
+)
+ap.add_argument(
+    "--gripper-speed",
+    type=float,
+    default=30.0,
+    help="jog speed in deg/s for --gripper (default 30). Deliberately slow: a send path that "
+    "honours it lags one that ignores it, which is the whole comparison",
 )
 args = ap.parse_args()
 
@@ -103,6 +113,7 @@ def jog_gripper():
     motor.enable()
     motor.ensure_mode(Mode.POS_VEL if vendor == "robstride" else Mode.FORCE_POS)
     step = 10.0
+    jog_vel = math.radians(args.gripper_speed)
     start = bus.poll_feedback([7])[7]
     if start is None:
         print("no feedback from gripper motor 0x07; check power and wiring")
@@ -119,6 +130,16 @@ def jog_gripper():
     # while 'stream' trails it, the streamed read is stale; if both trail together, the motor
     # is genuinely slow -- and then 'later' has climbed past 'param' because it is still moving.
     print("  stream = streamed status frame, param = mechPos round trip, later = mechPos again")
+    if vendor == "robstride":
+        # Bench 2026-09-19: speed_deg_s at 10, 60, 100 and 200 deg/s all moved the jaw at the
+        # same rate, which says limit_spd (0x7017) is not what governs speed in this mode.
+        # RobStride's POS_VEL is native mode 2 (PP) and the dedicated frame carries vel_max per
+        # command; the generic one has nowhere to put it. Steps alternate the two paths at the
+        # same commanded speed, so one run settles which is which: whichever path moves the jaw
+        # visibly slower is the one obeying --gripper-speed.
+        print(f"  pp / generic alternate per step, both commanded at {args.gripper_speed:.0f} deg/s")
+    paths = ["pp", "generic"] if vendor == "robstride" else ["force_pos"]
+    sends = 0
     while True:
         raw = input(f"step [{step:+.1f}] > ").strip()
         if raw.lower() == "q":
@@ -130,12 +151,16 @@ def jog_gripper():
                 print("  not a number")
                 continue
         target += step
+        path = paths[sends % len(paths)]
+        sends += 1
         sent = time.monotonic()
         with bus.lock:
-            if vendor == "robstride":
-                motor.send_pos_vel(math.radians(target), math.radians(90.0))
+            if path == "pp":
+                motor.robstride_send_pos_vel_pp(math.radians(target), jog_vel, jog_vel / RS_ACC_RAMP_S)
+            elif path == "generic":
+                motor.send_pos_vel(math.radians(target), jog_vel)
             else:
-                motor.send_force_pos(math.radians(target), math.radians(90.0), 0.07)
+                motor.send_force_pos(math.radians(target), jog_vel, 0.07)
         time.sleep(0.5)
         streamed = bus.poll_feedback([7], positions_only=False)[7]
         t_stream = time.monotonic() - sent
@@ -145,7 +170,7 @@ def jog_gripper():
         later = bus.poll_feedback([7], positions_only=True)[7]
         t_later = time.monotonic() - sent
         print(
-            f"  target {target:8.2f}  stream {deg(streamed):8.2f} (+{t_stream:.2f}s)  "
+            f"  [{path:>7}] target {target:8.2f}  stream {deg(streamed):8.2f} (+{t_stream:.2f}s)  "
             f"param {deg(param):8.2f} (+{t_param:.2f}s)  later {deg(later):8.2f} (+{t_later:.2f}s)"
         )
     print(f"\nrecord this as open_position_deg once the jaws are fully open: {target:.1f}")

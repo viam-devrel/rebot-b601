@@ -142,11 +142,11 @@ The arm's model carries no tool geometry: a tool with no gripper component of it
 | `variant` | string | `"dm"` | `"dm"` for the B601-DM (Damiao, USB serial bridge) or `"rs"` for the B601-RS (RobStride, CAN). Must match the arm's: opening a port for the other vendor's motors is refused |
 | `arm` | string | unset | Name of the arm component. Declares the dependency, and inherits `port`/`baud` when the dependency is a local `B601Arm` object. Under viam-server it is a gRPC client, so nothing is inherited: set `port` yourself |
 | `port`, `baud` | | as above | dm: auto-detected if omitted. rs: `port` (the CAN channel) is **required**, configuration fails without it |
-| `open_position_deg` | number | dm `-270`; rs **required** | Motor angle when fully open. There is no RS default: it depends on where the jaws sat when the motor was zeroed, so measure it (see below) |
+| `open_position_deg` | number | dm `-270`; rs `340` | Motor angle when fully open. The RS default is bench-measured by jogging the jaw from closed to its hard stop, and is **only correct if the motor was zeroed with the jaws closed** (the procedure below). The value in use is logged at configure. Re-measure it (see below) if your zero is elsewhere. Rejected if it does not differ from `closed_position_deg`, or differs by more than 1440° |
 | `closed_position_deg` | number | `0` | Motor angle when fully closed |
-| `speed_deg_s` | number | dm `900`; rs `286.5` (5 rad/s, the vendor's limit) | Gripper motor speed, deg/s. `set_speed` clamps to 10–3000 |
+| `speed_deg_s` | number | dm `900`; rs `286.5` (5 rad/s, the vendor's limit) | Gripper motor speed, deg/s. Clamped, with a warning, both here and in `set_speed`: dm 10–3000 (a fast leadscrew), rs 10–573 (10 rad/s, twice the vendor's reference `vlim`; 3000 deg/s is 52 rad/s, an order of magnitude past anything an rs-00 does, so it capped nothing) |
 | `torque_ratio` | number | `0.07` | Max grip force, `(0, 1]`, as a fraction of the motor's rated torque in `FORCE_POS`. dm only; accepted on rs but ignored, with a warning pointing at `grip_current_a` |
-| `grip_current_a` | number | `1.0` | rs only. Absolute grip current cap in amps, written to the motor's `limit_cur`. **1.0 A is a guess, not a derived figure**: conservative for a small rs-00 and deliberately erring toward a jaw too weak to close, which fails visibly rather than crushing. The configure log reports the motor's own limit (`limit_cur was X A`) so it can be tuned from evidence on the first run |
+| `grip_current_a` | number | `1.0` | rs only. Absolute grip current cap in amps, written to the motor's `limit_cur`. **1.0 A is bench-validated on a B601-RS** against the motor's 16 A factory limit (1, 4, 5, 10 and 16 A were tried): at 1.0 A the jaw closes on a cardboard box and holds it without crushing it. The configure log still reports the motor's own limit (`limit_cur was X A`) so it can be retuned from evidence |
 | `holding_threshold_deg` | number | `15` | Stall distance from fully closed that counts as "holding something". dm only |
 | `stall_polls` | int | `4` | Consecutive no-motion polls (at 20 Hz) that count as settled: dm near-zero velocity, rs a position change under 0.5° |
 | `move_timeout_s` | number | `6` | Give up waiting for a grab/open after this long |
@@ -155,13 +155,28 @@ The arm's model carries no tool geometry: a tool with no gripper component of it
 
 On the **B601-RS** the gripper is the same motor address, `0x07`, but a RobStride rs-00. RobStride has
 no force-limited position mode, so the module runs it in profile position (`POS_VEL`) instead of DM's
-`FORCE_POS`. Both limits live in motor parameters rather than in the command frame, so the module
-writes them at configure (and `limit_spd` again on `set_speed`):
+`FORCE_POS`. `Mode.POS_VEL` on a RobStride *is* the native mode 2, PP, so moves are sent with the
+dedicated `robstride_send_pos_vel_pp(pos, vel_max, acc_set)` frame rather than the generic
+`send_pos_vel(pos, vlim)`: PP takes its speed as a per-command `vel_max`, and the generic frame has
+nowhere to put one. Acceleration is not an attribute; it is derived as `vel_max / 0.1 s`, so the jaw
+reaches whatever speed was asked for in a tenth of a second (under a tenth of a full-travel move).
+
+The grip force limit is a motor parameter instead, which no command frame carries, so the module
+writes it at configure. `limit_spd` is written at configure too (and again on `set_speed`), because
+Seeed's stack does and it costs nothing:
 
 | Parameter | RID | Set from |
 |---|---|---|
-| `limit_spd` | `0x7017` | `speed_deg_s`, in rad/s |
+| `limit_spd` | `0x7017` | `speed_deg_s`, in rad/s. Probably **not** what governs speed in PP — see below |
 | `limit_cur` | `0x7018` | `grip_current_a`, in amps, written as an absolute value |
+
+**Unconfirmed:** on the bench (2026-09-19) `speed_deg_s` at 10, 60, 100 and 200 deg/s all moved the jaw
+at the same rate while moves went out through the generic `send_pos_vel` frame, which suggests
+`limit_spd` does not govern speed in this mode and the per-command `vel_max` does. Sending through the
+PP frame is the fix that follows from that reading, but only hardware can confirm it. To settle it,
+`tests/smoke_hardware.py --variant rs --port can0 --gripper` alternates the two send paths step by step
+at `--gripper-speed` and prints the path on each line: the path that honours the speed covers visibly
+less ground in the same half second.
 
 `limit_cur` caps the squeeze, so the jaws stall against a semi-stiff object instead of crushing it and
 driving on until the motor faults. It is written as an absolute current and is never derived from what
@@ -171,8 +186,10 @@ every restart until the jaw could not close at all. DM's `torque_ratio` is a fra
 in a mode RobStride does not have; it is a different knob, not the same one in other units, which is
 why RS has its own attribute.
 
-The module still reads `limit_cur` before writing and again afterwards, but only to report: the "was"
-value is informational and the read-back is a check. `0x7018` itself is inferred from the standard
+Both parameters are read back after the write and logged, with a warning if the read-back disagrees:
+`limit_spd` because there was otherwise no way to tell from the logs whether the speed cap landed, and
+`limit_cur` because its RID is inferred. For `limit_cur` the module also reads the value before writing,
+but only to report: the "was" value is informational and the read-back is a check. `0x7018` itself is inferred from the standard
 RobStride parameter table (Seeed's stack confirms its neighbours `0x7017` and `0x701E`-`0x7020`, and
 this module already uses `0x7019`), so if the read-back does not match what was written, that is logged
 as a warning saying grip force is **not** capped — the signal that the RID is wrong. A parameter the
@@ -181,9 +198,17 @@ firmware does not have is logged the same way and does not stop the gripper buil
 Once a move ends short of its target the module re-commands the angle the jaws actually reached, so a
 stalled jaw holds rather than grinds.
 
-Two attributes are required. `port` is required because the `arm` dependency is a gRPC client
-under viam-server and cannot hand over the local bus. `open_position_deg` is required because nothing
-records it for the B601-RS and it depends on where the jaws sat when the motor was zeroed; find it with
+`port` is required, because the `arm` dependency is a gRPC client under viam-server and cannot hand
+over the local bus. `open_position_deg` defaults to `340`, measured on the bench by jogging the jaw from
+closed to its hard stop. That default holds **only if motor `0x07` was zeroed with the jaws closed**
+(`{"set_zero_position": true}` with the jaws shut); a zero set anywhere else makes it wrong, and a wrong
+value misreports finger travel rather than failing, so the value in use is logged at every configure:
+
+```
+gripper open_position_deg is 340.0 deg (bench-measured default), closed 0.0: correct only if motor 0x07 was zeroed with the jaws closed
+```
+
+Re-measure it with
 
 ```
 tests/smoke_hardware.py --variant rs --port can0 --gripper

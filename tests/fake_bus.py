@@ -96,6 +96,11 @@ class FakeMotor:
         self.commands.append(("pos_vel", pos, vel))
         self.target, self.vel_cap = pos, abs(vel)
 
+    def robstride_send_pos_vel_pp(self, pos, vel_max, acc_set):
+        self.controller._check_link()
+        self.commands.append(("pos_vel_pp", pos, vel_max, acc_set))
+        self.target, self.vel_cap = pos, abs(vel_max)
+
     def send_mit(self, pos, vel, kp, kd, tau):
         self.controller._check_link()
         self.commands.append(("mit", pos, vel, kp, kd, tau))
