@@ -3,6 +3,10 @@
 The arm hashes were captured at 248ca4d and the gripper hashes at 8ff1d41, each before the
 refactor it guards. If a DM output changes on purpose, recapture in the same commit and say why.
 
+The three arm payload hashes were re-pinned at the frame split: the served arm chain now stops at
+the tool mount (link6), so the mount plate's link and its fixed joint are no longer in the URDF.
+The per-link mesh bytes (MESH_SHAS) and the gripper hashes were untouched by that trim.
+
 Note the two naming conventions: mesh keys are gripper_base/left_finger/right_finger while
 geometry labels are gripper_base/finger_left_link/finger_right_link."""
 
@@ -15,9 +19,9 @@ from src.rebot_b601 import kinematics, spatial
 
 ASSETS = Path(__file__).resolve().parent.parent / "src" / "rebot_b601" / "assets"
 
-PRIMITIVES_SHA = "fda17b269b403d30b4dfafd377b0540840a4fb504d2a2cf2144d007397c1aa5a"
-NONE_SHA = "86b193d24dbb937d619fd37ecabd37ecc92005ba628727901daf5cda9297d9ab"
-MESHES_URDF_SHA = "eeee3e00c5234a9de8f3b488374c0d00a3d26746427e83a8fd30271c07664080"
+PRIMITIVES_SHA = "d044ebfb974253e1c2eacbe39afeff5b57d9bbe255800cfe39768cbc88dc4fdc"
+NONE_SHA = "89e40b45c9b85350a256f8645cc7bd624768b38f968c08ed1802de060dbfe30b"
+MESHES_URDF_SHA = "335f8b28b4c25eb00b08e6e8b73bb4c728f4c0a2380549dae3a763fbd32c0256"
 MESH_SHAS = {  # meshes/<link>.stl -> sha256 of the bytes served in meshes mode
     "meshes/base_link.stl": "d3401304571743d57931895e92322864a7a495ddc5b55cfee8df93fac5c49210",
     "meshes/link1.stl": "e3ec037f5f94578a2857e2ee743c56aec46be1b1724f82b4650a882489be0526",

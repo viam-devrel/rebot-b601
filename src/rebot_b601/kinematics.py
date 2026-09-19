@@ -77,6 +77,15 @@ def arm_kinematics(
         raise ValueError(f"collision_geometry must be one of {COLLISION_MODES}")
     tree = ET.parse(model.urdf_path)
     root = tree.getroot()
+    # Serve the chain up to the tool mount. The bundled URDF runs one fixed joint further, to
+    # the mount plate, which stays in the file for its mass and its collision asset: a gripper
+    # is described by the gripper component, whose own model starts here.
+    for el in root.findall("joint"):
+        if el.get("type") == "fixed" and el.find("child").get("link") == model.end_link:
+            root.remove(el)
+    for el in root.findall("link"):
+        if el.get("name") == model.end_link:
+            root.remove(el)
     if joint_limits_deg is not None:
         revolute = [j for j in root.findall("joint") if j.get("type") == "revolute"]
         for joint, (lo, hi) in zip(revolute, joint_limits_deg):

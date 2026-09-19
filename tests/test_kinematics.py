@@ -44,7 +44,27 @@ def test_none_mode_has_no_collision(model):
 def test_kinematics_preserve_joint_chain(model):
     _, data = kinematics.arm_kinematics(model, "primitives")
     joints = [j.get("name") for j in ET.fromstring(data).findall("joint")]
-    assert joints == ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "end_joint"]
+    assert joints == ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+
+
+@pytest.mark.parametrize("model", BOTH)
+def test_served_arm_chain_ends_at_the_tool_mount(model):
+    root = ET.fromstring(kinematics.arm_kinematics(model, "primitives")[1])
+    names = {j.get("name") for j in root.findall("joint")}
+    assert "end_joint" not in names
+    assert {l.get("name") for l in root.findall("link")} == set(model.arm_links)
+    children = {j.find("child").get("link") for j in root.findall("joint")}
+    parents = {j.find("parent").get("link") for j in root.findall("joint")}
+    assert children - parents == {model.tool_mount_link}  # the only leaf
+
+
+@pytest.mark.parametrize("model", BOTH)
+def test_each_served_link_has_exactly_one_collision(model):
+    """The RDK keeps only the first <collision> per link and discards the rest silently, so a
+    second one would vanish without an error. Counting is the only assertion that catches it."""
+    root = ET.fromstring(kinematics.arm_kinematics(model, "primitives")[1])
+    for link in root.findall("link"):
+        assert len(link.findall("collision")) == 1, link.get("name")
 
 
 def test_rs_served_urdf_has_no_prismatic_joint():
