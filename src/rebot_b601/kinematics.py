@@ -64,7 +64,6 @@ def _read_mesh(model: spatial.Model, key: str) -> Optional[bytes]:
 def arm_kinematics(
     model: spatial.Model,
     mode: str = "primitives",
-    include_gripper_geometry: bool = False,
     joint_limits_deg: Optional[Sequence[Tuple[float, float]]] = None,
 ):
     """Return the get_kinematics tuple for ``model``: (format, urdf_bytes[, meshes]).
@@ -85,13 +84,11 @@ def arm_kinematics(
             joint.find("limit").set("upper", str(math.radians(hi)))
     meshes: Dict[str, Mesh] = {}
     links = list(model.arm_links)
-    if include_gripper_geometry:
-        links.append(model.end_link)
     for link_el in root.findall("link"):
         name = link_el.get("name")
         if name not in links or mode == "none":
             continue
-        asset_key = model.mount_asset_key if name == model.end_link else name
+        asset_key = name
         if mode == "primitives":
             prim = model.primitives.get(asset_key)
             if prim:
@@ -125,9 +122,7 @@ def _box_geometry(t_link, center_m: Sequence[float], size_m: Sequence[float], la
     )
 
 
-def arm_geometries(
-    model: spatial.Model, joint_degs: Sequence[float], include_gripper_geometry: bool = False
-) -> List[Geometry]:
+def arm_geometries(model: spatial.Model, joint_degs: Sequence[float]) -> List[Geometry]:
     """Per-link bounding boxes posed by the current joint state, in the arm's base frame.
 
     Always uses the primitive boxes, even in ``meshes`` mode: the planner gets
@@ -138,23 +133,19 @@ def arm_geometries(
     transforms = model.link_transforms(rads)
     out = []
     for idx, name in enumerate(model.link_order):
-        if name == model.end_link and not include_gripper_geometry:
+        if name not in model.arm_links:
             continue
-        key = model.mount_asset_key if name == model.end_link else name
-        prim = model.primitives.get(key)
+        prim = model.primitives.get(name)
         if not prim:
             continue
         out.append(_box_geometry(transforms[idx], prim["center"], prim["size"], name))
     return out
 
 
-def arm_3d_models(model: spatial.Model, include_gripper: bool = False) -> Dict[str, Mesh]:
+def arm_3d_models(model: spatial.Model) -> Dict[str, Mesh]:
     """GLB visual meshes keyed by link name, for the app's 3D view."""
     models: Dict[str, Mesh] = {}
-    names = list(model.arm_links)
-    if include_gripper:
-        names += [model.end_link, "finger_left_link", "finger_right_link"]
-    for name in names:
+    for name in model.arm_links:
         path = model.assets_dir / "models" / f"{name}.glb"
         if path.exists():
             models[name] = Mesh(content_type=_GLB_CONTENT_TYPE, mesh=path.read_bytes())

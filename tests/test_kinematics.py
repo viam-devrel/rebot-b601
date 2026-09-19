@@ -41,14 +41,6 @@ def test_none_mode_has_no_collision(model):
 
 
 @pytest.mark.parametrize("model", BOTH)
-def test_gripper_geometry_is_opt_in_on_arm(model):
-    _, data = kinematics.arm_kinematics(model, "primitives", include_gripper_geometry=True)
-    assert "end_link" in _links_with_collision(data)
-    root = ET.fromstring(data)
-    assert root.find("link[@name='end_link']/collision/geometry/box") is not None
-
-
-@pytest.mark.parametrize("model", BOTH)
 def test_kinematics_preserve_joint_chain(model):
     _, data = kinematics.arm_kinematics(model, "primitives")
     joints = [j.get("name") for j in ET.fromstring(data).findall("joint")]
@@ -125,7 +117,7 @@ def test_gripper_fingers_travel_in_opposite_directions(model):
 
 @pytest.mark.parametrize("model", BOTH)
 def test_3d_models_glb(model):
-    models = kinematics.arm_3d_models(model, include_gripper=True)
+    models = kinematics.arm_3d_models(model)
     assert set(model.arm_links) <= set(models)
     assert all(m.content_type == "model/gltf-binary" and m.mesh[:4] == b"glTF" for m in models.values())
 
