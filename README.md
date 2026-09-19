@@ -332,8 +332,8 @@ centres of mass at 50 Hz. It has **not been validated on hardware yet**: start w
 Each variant serves its own bundled URDF (`rebot_b601_dm.urdf`, `rebot_b601_rs.urdf`) with its own
 collision boxes, meshes and GLBs; the arm picks the model from `variant`.
 
-- Served joint limits differ. DM serves its URDF's own ranges, so its `get_kinematics` payload is
-  byte-identical to 0.4.0 (pinned by `tests/test_dm_baseline.py`). RS serves the module's soft
+- Served joint limits differ. DM serves its URDF's own ranges (pinned by
+  `tests/test_dm_baseline.py`). RS serves the module's soft
   `joint_limits_deg`: the RS arm rests about a degree below its URDF's 0 on joints 2 and 3, and
   viam-server rejects any target outside the served limits.
 - `get_kinematics` serves the bundled URDF with `<collision>` bodies added per `collision_geometry`.

@@ -316,7 +316,7 @@ class B601Gripper(Gripper, EasyResource):
             motor.robstride_write_param_f32(RS_RID_LIMIT_CUR, self.grip_current_a)
         except Exception:
             # The RID is inferred, so a firmware that does not have it must not stop the
-            # gripper building; it just runs uncapped, which is what 0.6.0 already did.
+            # gripper building; it just runs uncapped, as it did before the cap existed.
             LOGGER.warning(
                 "gripper limit_cur (RID 0x%04X) could not be set; grip force is NOT capped",
                 RS_RID_LIMIT_CUR,
@@ -588,7 +588,7 @@ class B601Gripper(Gripper, EasyResource):
                 self._send_target(pos, speed_deg_s)
             else:
                 # Never seeing the jaw move means the readings are the suspect part, not the jaw.
-                # Re-commanding one would turn a bad read into a physical reversal -- the 0.6.0
+                # Re-commanding one would turn a bad read into a physical reversal -- the
                 # bench failure where open() drove straight back to closed.
                 LOGGER.warning(
                     "gripper never moved off %.1f deg while driving to %.1f: feedback is stale "
