@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Build the mesh assets shipped with the rebot_b601 module.
+"""Build the mesh assets shipped with the rebot_b601 module, for one arm variant.
 
-Pulls the Seeed reBot-DevArm B601-DM description package at a pinned commit and
-writes, under src/rebot_b601/assets/:
+Pulls the Seeed description package for the chosen variant (dm or rs) at a
+pinned commit and writes, under src/rebot_b601/assets/<variant subdir>/:
 
   meshes/<link>.stl     decimated binary STL collision mesh per link (< 150 KB)
   models/<link>.glb     per-link visual GLB, URDF <visual> parts merged, flat
-                        per-part colours guessed from the part filename (< 300 KB)
+                        per-part colours from the URDF material, or guessed from
+                        the part filename for packages without materials (< 300 KB)
   primitives.json       axis-aligned bounding box of the ORIGINAL collision
                         mesh per link, in the link frame, metres; plus
                         triangle counts and provenance
@@ -14,7 +15,7 @@ writes, under src/rebot_b601/assets/:
 
 Re-runnable. Usage:
 
-  .venv/bin/python tools/build_assets.py [--source DIR] [--out DIR]
+  .venv/bin/python tools/build_assets.py [--variant dm|rs] [--source DIR] [--out DIR]
 
 With --source, meshes/URDF already present in DIR are used as-is; anything the
 URDF references that is missing there (typically the visual meshes) is
@@ -38,36 +39,14 @@ from pathlib import Path
 import numpy as np
 import trimesh
 
-SOURCE_REPO = "https://github.com/Seeed-Projects/reBot-DevArm"
-SOURCE_COMMIT = "b0acdcfc47843de16a9f018c6ab1de1d31649fdc"
-SOURCE_SUBDIR = "Rebot_Arm_description/DM"
-RAW_BASE = f"https://raw.githubusercontent.com/Seeed-Projects/reBot-DevArm/{SOURCE_COMMIT}/{SOURCE_SUBDIR}/"
-URDF_NAME = "ReBot_Arm_DM.urdf"
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = REPO_ROOT / "src" / "rebot_b601" / "assets"
 
 STL_CAP_BYTES = 150 * 1024
 GLB_CAP_BYTES = 300 * 1024
 
-# Collision mesh stem (as shipped by Seeed) -> URDF link name.
-# Output STLs and primitives.json are keyed by the collision stem; GLBs by the
-# URDF link name (that is what get_kinematics / Get3DModels address).
-LINKS: dict[str, str] = {
-    "base_link": "base_link",
-    "link1": "link1",
-    "link2": "link2",
-    "link3": "link3",
-    "link4": "link4",
-    "link5": "link5",
-    "link6": "link6",
-    "gripper_base": "end_link",
-    "left_finger": "finger_left_link",
-    "right_finger": "finger_right_link",
-}
-
-# Flat colour per visual part, guessed from the part filename. Ordered: the
-# first matching token wins, so the more specific names come first.
+# The DM package names its finishes in the part filenames instead of declaring URDF
+# materials. Ordered: the first matching token wins, so the more specific names come first.
 COLOR_RULES: list[tuple[str, str]] = [
     ("travel_stop_yellow", "#F2C200"),
     ("seeed_yellow", "#F2C200"),
@@ -81,6 +60,100 @@ COLOR_RULES: list[tuple[str, str]] = [
     ("metal", "#C0C0C0"),
 ]
 FALLBACK_COLOR = "#8A8A8A"
+
+
+@dataclass
+class Variant:
+    """One arm variant's upstream description package and its output layout."""
+
+    name: str
+    source_repo: str
+    source_commit: str
+    source_subdir: str
+    urdf_name: str
+    out_subdir: str  # "" for dm, "rs" for rs
+    links: dict[str, str]  # collision mesh stem -> URDF link name
+    rename: dict[str, str]  # vendor link name -> bundled link name (GLB filenames, primitives' urdf_link)
+    blurb: str  # one line for ATTRIBUTION.md
+    color_rules: list[tuple[str, str]]  # filename token -> hex, for packages without URDF materials
+    licence: list[str]  # the licence paragraph for ATTRIBUTION.md
+
+    @property
+    def raw_base(self) -> str:
+        owner_repo = self.source_repo.removeprefix("https://github.com/")
+        return f"https://raw.githubusercontent.com/{owner_repo}/{self.source_commit}/{self.source_subdir}/"
+
+
+# Output STLs and primitives.json are keyed by the collision mesh stem (as shipped by
+# Seeed); GLBs by the bundled link name (that is what get_kinematics / Get3DModels
+# address), which is the URDF link name after `rename`.
+VARIANTS: dict[str, Variant] = {
+    "dm": Variant(
+        name="dm",
+        source_repo="https://github.com/Seeed-Projects/reBot-DevArm",
+        source_commit="b0acdcfc47843de16a9f018c6ab1de1d31649fdc",
+        source_subdir="Rebot_Arm_description/DM",
+        urdf_name="ReBot_Arm_DM.urdf",
+        out_subdir="",
+        links={
+            "base_link": "base_link",
+            "link1": "link1",
+            "link2": "link2",
+            "link3": "link3",
+            "link4": "link4",
+            "link5": "link5",
+            "link6": "link6",
+            "gripper_base": "end_link",
+            "left_finger": "finger_left_link",
+            "right_finger": "finger_right_link",
+        },
+        rename={},
+        blurb="Seeed Studio reBot-DevArm B601-DM description package",
+        color_rules=COLOR_RULES,
+        licence=[
+            "The upstream repository licenses its hardware design files (including these",
+            "meshes and the URDF) under the CERN Open Hardware Licence Version 2 - Weakly",
+            "Reciprocal, and its software under the Apache License 2.0:",
+            "",
+            "- Hardware files (meshes, URDF): `SPDX-License-Identifier: CERN-OHL-W-2.0`",
+            "- Code: `SPDX-License-Identifier: Apache-2.0`",
+        ],
+    ),
+    "rs": Variant(
+        name="rs",
+        source_repo="https://github.com/Seeed-Projects/reBotArm_control_py",
+        source_commit="76512eab38ba54f11830e7cdfcba68e11629f902",
+        source_subdir="urdf/RS",
+        urdf_name="ReBot_Arm_RS.urdf",
+        out_subdir="rs",
+        links={
+            "base_link": "base_link",
+            "link1": "link1",
+            "link2": "link2",
+            "link3": "link3",
+            "link4": "link4",
+            "link5": "link5",
+            "link6": "link6",
+            "gripper_end": "gripper_end",
+        },
+        rename={"gripper_end": "end_link"},
+        blurb="Seeed Studio reBotArm_control_py B601-RS description package (urdf/RS)",
+        color_rules=[],  # the RS URDF declares its finishes as <material> elements
+        licence=[
+            "The upstream repository ships no LICENSE file at the pinned commit, and no",
+            "SPDX header appears in the URDF or the meshes. Seeed Studio publishes the",
+            "sibling reBot-DevArm description package under the CERN Open Hardware Licence",
+            "Version 2 - Weakly Reciprocal for hardware files and the Apache License 2.0",
+            "for code, so these RS hardware files are treated the same way:",
+            "",
+            "- Hardware files (meshes, URDF): `SPDX-License-Identifier: CERN-OHL-W-2.0`",
+            "  (assumed; upstream has not stated one for this package)",
+            "- Code: `SPDX-License-Identifier: Apache-2.0`",
+        ],
+    ),
+}
+
+V: Variant = VARIANTS["dm"]  # replaced in main() from --variant
 
 
 # --------------------------------------------------------------------------- utils
@@ -98,9 +171,24 @@ def hex_to_rgba(h: str) -> list[int]:
 def color_for(filename: str) -> tuple[str, str]:
     """Return (rule_token, hex) for a visual part filename."""
     stem = Path(filename).stem.lower()
-    for token, hexc in COLOR_RULES:
+    for token, hexc in V.color_rules:
         if token in stem:
             return token, hexc
+    return "fallback", FALLBACK_COLOR
+
+
+def rgba_to_hex(rgba: str) -> str:
+    r, g, b = (int(round(float(v) * 255)) for v in rgba.split()[:3])
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def color_for_part(part: VisualPart) -> tuple[str, str]:
+    """Name-token rule first (keeps the DM GLBs byte-identical), then the URDF material, then grey."""
+    token, hexc = color_for(part.rel)
+    if token != "fallback":
+        return token, hexc
+    if part.material_rgba:
+        return f"material:{part.material}", rgba_to_hex(part.material_rgba)
     return "fallback", FALLBACK_COLOR
 
 
@@ -113,10 +201,10 @@ def sha256_of(path: Path) -> str:
 
 
 def fetch(rel: str, dest: Path) -> bool:
-    """Download RAW_BASE/rel to dest if dest does not exist. Returns success."""
+    """Download the variant's raw_base/rel to dest if dest does not exist. Returns success."""
     if dest.exists() and dest.stat().st_size > 0:
         return True
-    url = RAW_BASE + rel
+    url = V.raw_base + rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         log(f"  download {url}")
@@ -149,7 +237,7 @@ def parse_origin(el: ET.Element | None) -> np.ndarray:
 
 
 def urdf_rel_to_source(fn: str) -> str:
-    """'../meshes/visual/x.stl' (relative to DM/urdf/) -> 'meshes/visual/x.stl'."""
+    """'../meshes/visual/x.stl' (relative to the package's urdf/ dir) -> 'meshes/visual/x.stl'."""
     fn = fn.replace("package://", "")
     parts = [p for p in Path(fn).parts if p not in ("..", ".")]
     if "meshes" in parts:
@@ -162,10 +250,11 @@ def urdf_rel_to_source(fn: str) -> str:
 
 @dataclass
 class VisualPart:
-    rel: str  # path relative to the DM/ source root, e.g. meshes/visual/x.stl
+    rel: str  # path relative to the package source root, e.g. meshes/visual/x.stl
     origin: np.ndarray
     scale: np.ndarray
     material: str | None
+    material_rgba: str | None
 
 
 @dataclass
@@ -180,7 +269,12 @@ class LinkSpec:
 
 def parse_urdf(urdf_path: Path) -> dict[str, LinkSpec]:
     root = ET.parse(urdf_path).getroot()
-    by_urdf = {v: k for k, v in LINKS.items()}
+    materials = {
+        m.get("name"): m.find("color").get("rgba")
+        for m in root.iter("material")
+        if m.get("name") and m.find("color") is not None
+    }
+    by_urdf = {v: k for k, v in V.links.items()}
     specs: dict[str, LinkSpec] = {}
     for link in root.iter("link"):
         name = link.get("name")
@@ -203,16 +297,19 @@ def parse_urdf(urdf_path: Path) -> dict[str, LinkSpec]:
             if vmesh is None:
                 continue
             mat = vis.find("material")
+            mat_name = mat.get("name") if mat is not None else None
+            inline = mat.find("color") if mat is not None else None
             spec.visuals.append(
                 VisualPart(
                     rel=urdf_rel_to_source(vmesh.get("filename")),
                     origin=parse_origin(vis.find("origin")),
                     scale=np.array([float(v) for v in vmesh.get("scale", "1 1 1").split()]),
-                    material=mat.get("name") if mat is not None else None,
+                    material=mat_name,
+                    material_rgba=inline.get("rgba") if inline is not None else materials.get(mat_name),
                 )
             )
         specs[stem] = spec
-    missing = set(LINKS) - set(specs)
+    missing = set(V.links) - set(specs)
     if missing:
         raise SystemExit(f"URDF is missing expected links: {sorted(missing)}")
     return specs
@@ -325,35 +422,39 @@ def build_glb(parts: list[tuple[str, trimesh.Trimesh, str]], link_name: str) -> 
 
 
 def main() -> int:
+    global V
+
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--variant", choices=list(VARIANTS), default="dm", help="arm variant to build (default dm)")
     ap.add_argument(
         "--source",
         type=Path,
         default=None,
-        help="directory holding the Seeed DM package (URDF + meshes/). Missing "
-        "files are downloaded into it. Default: ~/.cache/viam-rebot-b601/seeed-<commit>",
+        help="directory holding the Seeed description package (URDF + meshes/). Missing "
+        "files are downloaded into it. Default: ~/.cache/viam-rebot-b601/seeed-<variant>-<commit>",
     )
-    ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help=f"output dir (default {DEFAULT_OUT})")
+    ap.add_argument("--out", type=Path, default=None, help=f"output dir (default {DEFAULT_OUT}/<variant subdir>)")
     args = ap.parse_args()
 
+    V = VARIANTS[args.variant]
     source: Path = args.source or (
         Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
         / "viam-rebot-b601"
-        / f"seeed-{SOURCE_COMMIT[:12]}"
+        / f"seeed-{V.name}-{V.source_commit[:12]}"
     )
     source.mkdir(parents=True, exist_ok=True)
-    out: Path = args.out
+    out: Path = args.out or (DEFAULT_OUT / V.out_subdir)
     (out / "meshes").mkdir(parents=True, exist_ok=True)
     (out / "models").mkdir(parents=True, exist_ok=True)
 
     log(f"source: {source}")
     log(f"out:    {out}")
 
-    # URDF: accept DM/ReBot_Arm_DM.urdf or DM/urdf/ReBot_Arm_DM.urdf.
-    urdf_path = source / URDF_NAME
+    # URDF: accept <pkg>/ReBot_Arm_*.urdf or <pkg>/urdf/ReBot_Arm_*.urdf.
+    urdf_path = source / V.urdf_name
     if not urdf_path.exists():
-        urdf_path = source / "urdf" / URDF_NAME
-        if not urdf_path.exists() and not fetch(f"urdf/{URDF_NAME}", urdf_path):
+        urdf_path = source / "urdf" / V.urdf_name
+        if not urdf_path.exists() and not fetch(f"urdf/{V.urdf_name}", urdf_path):
             raise SystemExit("could not obtain the URDF")
     for aux in ("LICENSE", "README.md"):
         fetch(aux, source / aux)
@@ -386,9 +487,10 @@ def main() -> int:
         "units": "m",
         "frame": "URDF link frame (collision <origin> applied)",
         "bbox_source": "original (undecimated) collision mesh",
-        "source_repo": SOURCE_REPO,
-        "source_commit": SOURCE_COMMIT,
-        "source_subdir": SOURCE_SUBDIR,
+        "variant": V.name,
+        "source_repo": V.source_repo,
+        "source_commit": V.source_commit,
+        "source_subdir": V.source_subdir,
         "unit_scale_applied": unit_scale,
         "unit_note": unit_note,
         "links": {},
@@ -413,7 +515,7 @@ def main() -> int:
         if method == "convex_hull":
             fallbacks.append(f"meshes/{stem}.stl: convex hull")
         primitives["links"][stem] = {
-            "urdf_link": spec.urdf_link,
+            "urdf_link": V.rename.get(spec.urdf_link, spec.urdf_link),
             "center": [round(c, 6) for c in center],
             "size": [round(s, 6) for s in size],
         }
@@ -428,6 +530,7 @@ def main() -> int:
     # ---- visual GLBs
     glb_report: dict = {}
     for spec in specs.values():
+        out_link = V.rename.get(spec.urdf_link, spec.urdf_link)
         parts: list[tuple[str, trimesh.Trimesh, str]] = []
         for v in spec.visuals:
             if v.rel in skipped_visuals:
@@ -437,28 +540,28 @@ def main() -> int:
             # GLB indexes vertices instead of repeating them (geometry unchanged).
             m.merge_vertices()
             m.apply_transform(v.origin @ np.diag(list(v.scale * unit_scale) + [1.0]))
-            _token, hexc = color_for(v.rel)
+            _token, hexc = color_for_part(v)
             parts.append((Path(v.rel).stem, m, hexc))
         if not parts:
-            log(f"  {spec.urdf_link}: no visual parts available, skipping GLB")
-            fallbacks.append(f"models/{spec.urdf_link}.glb: not built (no visual meshes)")
+            log(f"  {out_link}: no visual parts available, skipping GLB")
+            fallbacks.append(f"models/{out_link}.glb: not built (no visual meshes)")
             continue
-        data, rep = build_glb(parts, spec.urdf_link)
-        dest = out / "models" / f"{spec.urdf_link}.glb"
+        data, rep = build_glb(parts, out_link)
+        dest = out / "models" / f"{out_link}.glb"
         dest.write_bytes(data)
         hulls = [n for n, m in rep["methods"].items() if m == "convex_hull"]
         if hulls:
-            fallbacks.append(f"models/{spec.urdf_link}.glb: convex hull for {hulls}")
+            fallbacks.append(f"models/{out_link}.glb: convex hull for {hulls}")
         rep["parts"] = {
-            Path(v.rel).stem: {"source": v.rel, "color": color_for(v.rel)[1], "urdf_material": v.material}
+            Path(v.rel).stem: {"source": v.rel, "color": color_for_part(v)[1], "urdf_material": v.material}
             for v in spec.visuals
             if v.rel not in skipped_visuals
         }
         rep["bytes"] = len(data)
-        glb_report[spec.urdf_link] = rep
-        file_rows.append((f"models/{spec.urdf_link}.glb", len(data), f"merged {len(parts)} visual part(s)"))
+        glb_report[out_link] = rep
+        file_rows.append((f"models/{out_link}.glb", len(data), f"merged {len(parts)} visual part(s)"))
         log(
-            f"  {spec.urdf_link:17s} faces {rep['faces_original']:6d} -> {rep['faces_decimated']:5d}, "
+            f"  {out_link:17s} faces {rep['faces_original']:6d} -> {rep['faces_decimated']:5d}, "
             f"{len(data) / 1024:6.1f} KB"
         )
 
@@ -476,28 +579,23 @@ def main() -> int:
     lines = [
         "# Asset attribution",
         "",
-        "The meshes in this directory are derived from the Seeed Studio reBot-DevArm",
-        "B601-DM description package.",
+        f"The meshes in this directory are derived from the {V.blurb}.",
         "",
-        f"- Source repository: {SOURCE_REPO}",
-        f"- Pinned commit: `{SOURCE_COMMIT}`",
-        f"- Package path: `{SOURCE_SUBDIR}/` (URDF `urdf/{URDF_NAME}`, meshes under `meshes/`)",
-        f"- Rebuilt with `tools/build_assets.py` (trimesh {trimesh.__version__})",
+        f"- Source repository: {V.source_repo}",
+        f"- Pinned commit: `{V.source_commit}`",
+        f"- Package path: `{V.source_subdir}/` (URDF `urdf/{V.urdf_name}`, meshes under `meshes/`)",
+        f"- Rebuilt with `tools/build_assets.py --variant {V.name}` (trimesh {trimesh.__version__})",
         "",
         "## Licence",
         "",
-        "The upstream repository licenses its hardware design files (including these",
-        "meshes and the URDF) under the CERN Open Hardware Licence Version 2 - Weakly",
-        "Reciprocal, and its software under the Apache License 2.0:",
-        "",
-        "- Hardware files (meshes, URDF): `SPDX-License-Identifier: CERN-OHL-W-2.0`",
-        "- Code: `SPDX-License-Identifier: Apache-2.0`",
+        *V.licence,
         "",
         "The meshes are redistributed unmodified apart from decimation (triangle count",
         "reduction) and format conversion (binary STL; visual parts merged per link",
         "into GLB with flat colours). Geometry, units (metres) and link frames are",
-        "unchanged from the source. A copy of the upstream LICENSE text accompanies the",
-        "source package; this notice is the required attribution.",
+        "unchanged from the source. A copy of the upstream LICENSE text, where the",
+        "source package ships one, accompanies it; this notice is the required",
+        "attribution.",
         "",
         "## Units and frames",
         "",
@@ -516,7 +614,7 @@ def main() -> int:
     for f in src_files:
         p = source / f
         digest = sha256_of(p)[:16] if p.exists() else "missing"
-        lines.append(f"- `{SOURCE_SUBDIR}/{f}` (sha256 {digest}...)")
+        lines.append(f"- `{V.source_subdir}/{f}` (sha256 {digest}...)")
     if skipped_visuals:
         lines += ["", "## Skipped (download failed)", ""] + [f"- `{f}`" for f in skipped_visuals]
     lines.append("")

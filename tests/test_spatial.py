@@ -14,6 +14,8 @@ import random
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.rebot_b601 import spatial
@@ -73,41 +75,76 @@ def test_ov_round_trip():
     print("OV round-trip: 500 random rotations OK")
 
 
-def test_fk_against_pytransform3d():
+@pytest.mark.parametrize("name", ["dm", "rs"])
+def test_fk_against_pytransform3d(name):
     import numpy as np
     from pytransform3d.urdf import UrdfTransformManager
 
+    model = spatial.MODELS[name]
     tm = UrdfTransformManager()
-    tm.load_urdf(spatial.URDF_PATH.read_text())
-
-    joint_names = [j.name for j in spatial.REVOLUTE_JOINTS]
-    limits = [(j.lower, j.upper) for j in spatial.REVOLUTE_JOINTS]
-
+    tm.load_urdf(model.urdf_path.read_text())
+    joint_names = [j.name for j in model.revolute]
+    limits = [(j.lower, j.upper) for j in model.revolute]
+    rng = random.Random(1234 if name == "dm" else 5678)
     for trial in range(200):
-        if trial == 0:
-            q = [0.0] * 6
-        else:
-            q = [random.uniform(lo, hi) for lo, hi in limits]
-        for name, angle in zip(joint_names, q):
-            tm.set_joint(name, angle)
-        expected = tm.get_transform("end_link", "base_link")
-        (x, y, z), rot = spatial.forward_kinematics(q)
+        q = [0.0] * 6 if trial == 0 else [rng.uniform(lo, hi) for lo, hi in limits]
+        for jn, angle in zip(joint_names, q):
+            tm.set_joint(jn, angle)
+        expected = tm.get_transform(model.end_link, "base_link")
+        (x, y, z), rot = model.forward_kinematics(q)
         assert np.allclose(expected[:3, 3], [x, y, z], atol=1e-9), (
-            f"FK position mismatch at {q}: {expected[:3, 3]} vs {(x, y, z)}"
+            f"{name} FK position mismatch at {q}: {expected[:3, 3]} vs {(x, y, z)}"
         )
-        assert np.allclose(expected[:3, :3], np.array(rot), atol=1e-9), f"FK rotation mismatch at {q}"
-    print("FK vs pytransform3d: 200 random configurations OK")
+        assert np.allclose(expected[:3, :3], np.array(rot), atol=1e-9), f"{name} FK rotation mismatch at {q}"
 
 
-def test_end_position_units():
-    x, y, z, ox, oy, oz, theta = spatial.end_position([0, 0, 0, 0, 0, 0])
-    norm = math.sqrt(ox * ox + oy * oy + oz * oz)
-    assert abs(norm - 1.0) < 1e-9
-    print(f"zero pose: x={x:.1f} y={y:.1f} z={z:.1f} mm, o=({ox:.3f},{oy:.3f},{oz:.3f}), theta={theta:.1f} deg")
+@pytest.mark.parametrize("name", ["dm", "rs"])
+def test_end_position_units(name):
+    x, y, z, ox, oy, oz, theta = spatial.MODELS[name].end_position([0, 0, 0, 0, 0, 0])
+    assert abs(math.sqrt(ox * ox + oy * oy + oz * oz) - 1.0) < 1e-9
+    assert abs(x) + abs(z) > 100  # millimetres, not metres
+
+
+def test_rs_zero_pose_is_the_folded_rest_posture():
+    x, y, z, *_ = spatial.MODELS["rs"].end_position([0] * 6)
+    assert math.isclose(x, 301.7, abs_tol=0.1)
+    assert math.isclose(y, 0.0, abs_tol=0.1)
+    assert math.isclose(z, 217.7, abs_tol=0.1)
+    # positive j2/j3 on RS move the arm the way negative ones do on DM
+    _, _, z_up, *_ = spatial.MODELS["rs"].end_position([0, 30, 50, 0, 0, 0])
+    assert z_up > 500
+
+
+def test_rs_gravity_torques_mirror_dm():
+    rs, dm = spatial.MODELS["rs"], spatial.MODELS["dm"]
+    g = rs.gravity_torques([0.0] * 6)
+    assert math.isclose(g[0], 0.0, abs_tol=1e-9)  # base yaw sees no gravity torque
+    assert abs(g[2]) == max(abs(v) for v in g) > 5.0  # elbow carries the most at the rest pose
+    assert abs(rs.gravity_torques([0.0] * 6, extra_payload_kg=1.0)[2]) > abs(g[2])
+    # arm straight up: RS shoulder at +90 (DM: -90) unloads the elbow
+    assert abs(rs.gravity_torques([0, math.radians(90), 0, 0, 0, 0])[2]) < abs(g[2])
+    # the two arms are mirrored: rest-pose elbow torques have opposite sign
+    assert g[2] * dm.gravity_torques([0.0] * 6)[2] < 0
+
+
+def test_rs_bundle_is_the_vendor_chain_renamed():
+    import xml.etree.ElementTree as ET
+
+    rs = Path(__file__).parent.parent / "src" / "rebot_b601" / "rebot_b601_rs.urdf"
+    root = ET.parse(rs).getroot()
+    assert root.get("name") == "rebot_b601_rs"
+    joints = [(j.get("name"), j.get("type")) for j in root.findall("joint")]
+    assert joints == [(f"joint{i}", "revolute") for i in range(1, 7)] + [("end_joint", "fixed")]
+    links = [l.get("name") for l in root.findall("link")]
+    assert links == ["base_link", "link1", "link2", "link3", "link4", "link5", "link6", "end_link"]
+    assert root.find("link[@name='end_link']/inertial/mass").get("value") == "0.65"
+    assert root.find("joint[@name='end_joint']/origin").get("xyz") == "0 0 0.16621"
+    assert root.find("joint[@name='joint2']/limit").get("upper") == "3.14"
+    assert not root.findall(".//visual") and not root.findall(".//collision")
 
 
 if __name__ == "__main__":
     test_ov_round_trip()
-    test_end_position_units()
-    test_fk_against_pytransform3d()
+    test_end_position_units("dm")
+    test_fk_against_pytransform3d("dm")
     print("all spatial tests passed")

@@ -1,14 +1,20 @@
 """Hardware smoke test for the B601 (DM or RS).
 
-Read-only by default: prints joint state (and, for DM, forward kinematics) and never
+Read-only by default: prints joint state and forward kinematics (both variants) and never
 enables torque. With --move it nudges joint 6 by +5 deg and back, then stops; torque is
 enabled only after you confirm at an explicit prompt, and the move is refused with the
 arm's own message if any motor reports a fault, a collision or an over-temperature.
+
+With --gravity-check the arm is built too (torque on, so the motors hold where they are) but
+nothing is commanded: it prints, per joint, the torque the motors measure while holding next
+to the gravity torque the model predicts, so you can see whether the signs agree before
+turning gravity compensation on. Stop viam-server first: the CAN channel cannot be shared.
 
 Run:
   .venv/bin/python tests/smoke_hardware.py                          # DM, port auto-detected
   .venv/bin/python tests/smoke_hardware.py --variant rs --port can0  # RS, read-only
   .venv/bin/python tests/smoke_hardware.py --variant rs --port can0 --move
+  .venv/bin/python tests/smoke_hardware.py --variant rs --port can0 --gravity-check
 
 macOS + PEAK PCAN-USB: motorbridge dlopens libPCBUSB.dylib by bare name, so run with
 DYLD_LIBRARY_PATH=/usr/local/lib (run.sh exports it for the module itself).
@@ -16,6 +22,7 @@ DYLD_LIBRARY_PATH=/usr/local/lib (run.sh exports it for the module itself).
 
 import argparse
 import asyncio
+import math
 import sys
 import time
 from pathlib import Path
@@ -36,6 +43,12 @@ ap = argparse.ArgumentParser(
 ap.add_argument("--port", help="serial device (dm, default: auto-detect) or CAN channel (rs, required)")
 ap.add_argument("--variant", choices=("dm", "rs"), default="dm")
 ap.add_argument("--move", action="store_true", help="enable torque and nudge joint 6 by 5 deg (MOVES THE ARM)")
+ap.add_argument(
+    "--gravity-check",
+    action="store_true",
+    help="read-only: enable torque so the arm holds, then compare measured holding torque with "
+    "the model's gravity torque per joint (stop viam-server first; the CAN channel cannot be shared)",
+)
 args = ap.parse_args()
 
 port = args.port
@@ -81,36 +94,68 @@ if vendor == "robstride":
         bus.motor(cid).robstride_set_active_report(True)
     time.sleep(0.3)
 positions = show(bus)
-if args.variant == "dm" and len(positions) == 6:
-    x, y, z, ox, oy, oz, theta = spatial.end_position(positions)
+if len(positions) == 6:
+    x, y, z, ox, oy, oz, theta = spatial.MODELS[args.variant].end_position(positions)
     print(
-        f"\nend effector (FK): x={x:.1f} y={y:.1f} z={z:.1f} mm  o=({ox:.3f},{oy:.3f},{oz:.3f}) theta={theta:.1f} deg"
+        f"\nend mount (FK, {args.variant}): x={x:.1f} y={y:.1f} z={z:.1f} mm  "
+        f"o=({ox:.3f},{oy:.3f},{oz:.3f}) theta={theta:.1f} deg"
     )
-elif args.variant == "rs":
-    # No status stream here (motors are unconfigured), so RS positions come from mechPos
-    # parameter reads and report "position only (no status frame)" -- expected, and why
-    # this check works with torque off.
+if args.variant == "rs":
+    # With torque off the motors do not hold, so a hand-move shows up in the next read; the
+    # stream is on (see above) so the rows carry real status too.
     input("\nstaleness check: torque is off; move any joint by hand a little, then press Enter ... ")
     show(bus)
 
-if not args.move:
+if not (args.move or args.gravity_check):
     bus.release()
     print("done (torque untouched)")
     sys.exit(0)
 
 # Keep the bus held across the move: the arm acquires the same port/baud/vendor and so
 # reuses this cached instance instead of closing and reopening the CAN channel.
-input("\n--move: the arm will now enable torque and move joint 6. Enter to continue, Ctrl-C to abort ... ")
+input(
+    "\nthe arm will now enable torque"
+    + (", and move joint 6" if args.move else "")
+    + ". Enter to continue, Ctrl-C to abort ... "
+)
 
 from viam.proto.app.robot import ComponentConfig  # noqa: E402
 from viam.proto.component.arm import JointPositions  # noqa: E402
 from viam.utils import dict_to_struct  # noqa: E402
 
-from src.rebot_b601.arm import B601Arm  # noqa: E402
+from src.rebot_b601.arm import ARM_CAN_IDS, B601Arm  # noqa: E402
 from src.rebot_b601.damiao import CollisionError, MotorFault, OverTemperatureError  # noqa: E402
 
 attrs = {"variant": args.variant, "port": port, "speed_deg_s": 20}
 arm = B601Arm.new(ComponentConfig(name="smoke", attributes=dict_to_struct(attrs)), {})
+
+
+def gravity_check():
+    print("\nhealth:", arm._health_report())
+    positions = arm._read_positions_deg()
+    states = arm._read_states()
+    model = spatial.MODELS[args.variant]
+    g = model.gravity_torques([math.radians(d) for d in positions], arm.gravity_vector, arm.payload_kg)
+    print(f"\ngravity check at {[round(p, 1) for p in positions]} deg (torque on, holding)")
+    print(f"  {'joint':7s} {'measured':>9s} {'model':>9s} {'expect':>9s}  sign")
+    ok = True
+    for i, cid in enumerate(ARM_CAN_IDS):
+        s = states.get(cid)
+        expect = -g[i]  # the motor torque that cancels gravity
+        if s is None or getattr(s, "position_only", False):
+            # No status frame, so no torque measurement: not a mismatch, just nothing to judge.
+            measured, flag = float("nan"), "no data"
+        elif abs(expect) < 0.5 or s.torq * expect > 0:
+            measured, flag = s.torq, "ok"
+        else:
+            measured, flag = s.torq, "MISMATCH"
+        ok &= flag != "MISMATCH"
+        print(f"  joint{i + 1:<2d} {measured:9.3f} {g[i]:9.3f} {expect:9.3f}  {flag}")
+    print("  (expect = -model; a joint with |expect| < 0.5 Nm is too lightly loaded to judge)")
+    print(
+        "gravity check:",
+        "signs agree on every loaded joint" if ok else "SIGN MISMATCH, do not enable gravity compensation",
+    )
 
 
 async def nudge():
@@ -127,7 +172,10 @@ async def nudge():
 
 
 try:
-    asyncio.run(nudge())
+    if args.gravity_check:
+        gravity_check()
+    if args.move:
+        asyncio.run(nudge())
 except (MotorFault, CollisionError, OverTemperatureError) as e:
     print(f"\nREFUSED: {e}")
     sys.exit(1)

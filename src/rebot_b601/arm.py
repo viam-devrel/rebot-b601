@@ -1,4 +1,7 @@
-"""Viam arm component for the Seeed Studio reBot Arm B601-DM (6 DoF, Damiao CAN motors)."""
+"""Viam arm component for the Seeed Studio reBot Arm B601 (6 DoF).
+
+DM: Damiao CAN motors over a serial bridge. RS: RobStride motors over CAN.
+"""
 
 import asyncio
 import math
@@ -165,6 +168,18 @@ class B601Arm(Arm, EasyResource):
         self.variant = attrs.get("variant", "dm")
         rs = self.variant == "rs"
         vendor = VARIANT_VENDOR[self.variant]
+        self.model = spatial.MODELS[self.variant]
+        if not self.model.primitives:
+            # ponytail: log only. Raising would refuse to build an RS arm before its assets
+            # exist, but a primitives-mode URDF with zero boxes lets the planner route the arm
+            # through itself, so this warning is the only signal that collision data is missing;
+            # raise instead once every variant ships assets.
+            LOGGER.warning(
+                "no collision primitives for the %s model under %s; the served URDF "
+                "(primitives mode) and get_geometries carry no collision bodies",
+                self.variant,
+                self.model.assets_dir,
+            )
         port = attrs.get("port") or detect_port()
         baud = int(attrs.get("baud", DEFAULT_BAUD))
 
@@ -195,10 +210,13 @@ class B601Arm(Arm, EasyResource):
         self.manual_kd = float(attrs.get("manual_mode_kd", DEFAULT_MANUAL_KD))
         self.gravity_scale = float(attrs.get("gravity_scale", 1.0))
         if rs:
-            # spatial.py models the DM arm; the RS arm's axes differ, so the feed-forward
-            # would have the wrong sign. Manual mode stays available as pure damping.
+            # The RS gravity model exists (spatial.MODELS["rs"]) but is unverified on hardware; keep the
+            # feed-forward off until the bench comparison in the plan's Task 8 passes.
             if attrs.get("gravity_scale"):
-                LOGGER.warning("gravity compensation is not modelled for the B601-RS yet; manual mode is damping only")
+                LOGGER.warning(
+                    "gravity compensation on the B601-RS is not yet verified on hardware; "
+                    "gravity_scale is forced to 0 (manual mode is damping only)"
+                )
             self.gravity_scale = 0.0
         self.payload_kg = float(attrs.get("payload_kg", 0.0))
         gv = attrs.get("gravity_vector", [0.0, 0.0, -spatial.GRAVITY_M_S2])
@@ -635,10 +653,10 @@ class B601Arm(Arm, EasyResource):
     def manual_torques(self, positions_deg: Sequence[float]) -> List[float]:
         """Feed-forward torques (Nm) that cancel gravity at the given pose."""
         rads = [math.radians(d) for d in positions_deg]
-        g = spatial.gravity_torques(rads, self.gravity_vector, self.payload_kg)
+        g = self.model.gravity_torques(rads, self.gravity_vector, self.payload_kg)
         out = []
         for i, tau in enumerate(g):
-            limit = spatial.JOINT_EFFORT_NM[i] or 1e9
+            limit = self.model.effort_nm[i] or 1e9
             out.append(_clamp(-tau * self.gravity_scale, -limit, limit))
         return out
 
@@ -695,7 +713,7 @@ class B601Arm(Arm, EasyResource):
 
     async def get_end_position(self, *, extra=None, timeout=None, **kwargs) -> Pose:
         positions = await asyncio.to_thread(self._read_positions_deg)
-        x, y, z, ox, oy, oz, theta = spatial.end_position(positions)
+        x, y, z, ox, oy, oz, theta = self.model.end_position(positions)
         return Pose(x=x, y=y, z=z, o_x=ox, o_y=oy, o_z=oz, theta=theta)
 
     async def move_to_position(self, pose: Pose, *, extra=None, timeout=None, **kwargs):
@@ -717,17 +735,19 @@ class B601Arm(Arm, EasyResource):
         return any(abs(s.vel) > self.moving_vel_rad_s for s in states.values() if s is not None)
 
     async def get_kinematics(self, *, extra=None, timeout=None, **kwargs):
-        # The bundled URDF is the DM arm; on RS its joint 2/3 range (-180..0) would make
-        # viam-server reject every target the RS motors can reach. Serve the soft limits.
+        # The RS URDF's joint 2/3 lower bound is 0, but the arm rests about 1 deg below it
+        # and viam-server rejects any target outside the served limits, so serve the soft
+        # limits. DM keeps its URDF limits so its served payload stays byte-identical
+        # (tests/test_dm_baseline.py); serving soft limits on DM too is a deliberate future change.
         limits = self.joint_limits if self.variant == "rs" else None
-        return kinematics.arm_kinematics(self.collision_mode, self.include_gripper_geometry, limits)
+        return kinematics.arm_kinematics(self.model, self.collision_mode, self.include_gripper_geometry, limits)
 
     async def get_geometries(self, *, extra=None, timeout=None, **kwargs) -> List[Geometry]:
         positions = await asyncio.to_thread(self._read_positions_deg)
-        return kinematics.arm_geometries(positions, self.include_gripper_geometry)
+        return kinematics.arm_geometries(self.model, positions, self.include_gripper_geometry)
 
     async def get_3d_models(self, *, extra=None, timeout=None, **kwargs) -> Dict[str, Mesh]:
-        return kinematics.arm_3d_models(self.include_gripper_geometry)
+        return kinematics.arm_3d_models(self.model, self.include_gripper_geometry)
 
     def _health_report(self) -> Dict[str, Any]:
         states = self._read_states()
@@ -811,10 +831,21 @@ class B601Arm(Arm, EasyResource):
                 else:
                     raise ValueError("'manual_mode' must be 'enter' or 'exit'")
             elif name == "gravity_torques":
-                if self.variant == "rs":
-                    raise NotImplementedError("gravity torques are not modelled for the B601-RS yet")
                 positions = await asyncio.to_thread(self._read_positions_deg)
-                result[name] = self.manual_torques(positions)
+                if self.variant == "rs":
+                    # gravity_scale is pinned to 0 on RS, so manual_torques() would report zeros.
+                    # Serve the model's own numbers (unscaled, unclamped) so the bench check has
+                    # something to compare, and say plainly that nothing is applied.
+                    g = self.model.gravity_torques(
+                        [math.radians(d) for d in positions], self.gravity_vector, self.payload_kg
+                    )
+                    result[name] = {
+                        "torques_nm": [-t for t in g],
+                        "note": "unverified on hardware; gravity_scale is forced to 0 on RS "
+                        "until the bench check passes",
+                    }
+                else:
+                    result[name] = self.manual_torques(positions)
             else:
                 raise ValueError(f"unknown command '{name}'")
         return result

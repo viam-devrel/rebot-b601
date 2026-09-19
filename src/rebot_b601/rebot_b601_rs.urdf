@@ -1,0 +1,100 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="rebot_b601_rs">
+  <!-- Derived from Seeed-Projects/reBotArm_control_py urdf/RS/urdf/ReBot_Arm_RS.urdf at commit 76512eab38ba54f11830e7cdfcba68e11629f902: inertial origin/mass, joint origins/axes/limits and the fixed mount only; visuals, collisions, inertia tensors and the finger joints are dropped. gripper_end/j_gripper_end are renamed end_link/end_joint so the mount frame is named as on the DM arm. Hardware files: CERN-OHL-W-2.0 (see assets/rs/ATTRIBUTION.md). -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="2.87641888266442E-06 -0.000122302488725115 0.0243376121934547" rpy="0 0 0" />
+      <mass value="1.1774" />
+    </inertial>
+  </link>
+  <joint name="joint1" type="revolute">
+    <origin xyz="-0.00034283 -0.00098683 0.075" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="link1" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-2.8" upper="2.8" effort="36" velocity="50" />
+  </joint>
+  <link name="link1">
+    <inertial>
+      <origin xyz="0.00817652280320541 0.00122584211922395 0.0331419658967293" rpy="0 0 0" />
+      <mass value="0.4655" />
+    </inertial>
+  </link>
+  <joint name="joint2" type="revolute">
+    <origin xyz="0.020343 0.027237 0.07" rpy="-1.5708 0 0" />
+    <parent link="link1" />
+    <child link="link2" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="3.14" effort="36" velocity="50" />
+  </joint>
+  <link name="link2">
+    <inertial>
+      <origin xyz="-0.117864812717456 -0.00342226413942967 -0.0271551938501484" rpy="0 0 0" />
+      <mass value="1.552" />
+    </inertial>
+  </link>
+  <joint name="joint3" type="revolute">
+    <origin xyz="-0.236 0 0" rpy="0 0 0" />
+    <parent link="link2" />
+    <child link="link3" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0" upper="3.14" effort="36" velocity="50" />
+  </joint>
+  <link name="link3">
+    <inertial>
+      <origin xyz="0.103427154487799 -0.0664137912104635 -0.0271068687716704" rpy="0 0 0" />
+      <mass value="1.252" />
+    </inertial>
+  </link>
+  <joint name="joint4" type="revolute">
+    <origin xyz="0.228 -0.072746 0.0045" rpy="0 0 0" />
+    <parent link="link3" />
+    <child link="link4" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-1.57" upper="1.57" effort="14" velocity="40" />
+  </joint>
+  <link name="link4">
+    <inertial>
+      <origin xyz="0.0475544540775559 -0.0441113470158517 -0.0314111924918381" rpy="0 0 0" />
+      <mass value="0.46" />
+    </inertial>
+  </link>
+  <joint name="joint5" type="revolute">
+    <origin xyz="0.087 -0.048 -0.03075" rpy="-1.5708 0 0" />
+    <parent link="link4" />
+    <child link="link5" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-1.57" upper="1.57" effort="14" velocity="40" />
+  </joint>
+  <link name="link5">
+    <inertial>
+      <origin xyz="0.0114400622356175 4.7907739316217E-06 0.0380487481818926" rpy="0 0 0" />
+      <mass value="0.20120457182895" />
+    </inertial>
+  </link>
+  <joint name="joint6" type="revolute">
+    <origin xyz="0.0365 0 0.048" rpy="0 1.5708 0" />
+    <parent link="link5" />
+    <child link="link6" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-3.14" upper="3.14" effort="14" velocity="40" />
+  </joint>
+  <link name="link6">
+    <inertial>
+      <origin xyz="1.80196022567525E-05 2.48334592051007E-08 0.00434805764057547" rpy="0 0 0" />
+      <mass value="0.1" />
+    </inertial>
+  </link>
+  <joint name="end_joint" type="fixed">
+    <origin xyz="0 0 0.16621" rpy="3.1416 -1.5708 0" />
+    <parent link="link6" />
+    <child link="end_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="end_link">
+    <inertial>
+      <origin xyz="-0.112751692515958 0.000128443070436966 -5.72602449749882E-06" rpy="0 0 0" />
+      <mass value="0.65" />
+    </inertial>
+  </link>
+</robot>

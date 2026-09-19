@@ -1,12 +1,13 @@
-"""Kinematics files, collision geometry, and 3D models served to viam-server.
+"""Kinematics files, collision geometry, and 3D models served to viam-server, built
+from whichever ``spatial.Model`` the arm holds.
 
-The bundled ``rebot_b601_dm.urdf`` is the single source of truth for the joint
-chain (spatial.py parses the same file for FK). This module decorates it with
-``<collision>`` elements at request time, in one of three modes:
+The variant's URDF is the single source of truth for the joint chain (spatial.py
+parses the same file for FK). This module decorates it with ``<collision>``
+elements at request time, in one of three modes:
 
 - ``primitives`` (default): one axis-aligned box per link, fitted to the
-  vendor collision mesh (``assets/primitives.json``). Parses from bytes with
-  no external files and is cheap for the planner.
+  vendor collision mesh (``<assets_dir>/primitives.json``). Parses from bytes
+  with no external files and is cheap for the planner.
 - ``meshes``: ``<mesh filename="meshes/<link>.stl">`` per link. The decimated
   STL bytes are returned alongside the URDF; the Python SDK puts them in
   ``GetKinematicsResponse.meshes_by_urdf_filepath`` and the RDK resolves the
@@ -17,43 +18,20 @@ The gripper gets its own small URDF (one prismatic finger joint) built from the
 same primitives so it can be a frame-system link with a collision body.
 """
 
-import json
 import math
 import xml.etree.ElementTree as ET
-from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from viam.proto.common import Geometry, KinematicsFileFormat, Mesh, Pose, RectangularPrism, Vector3
 
 from . import spatial
 
-ASSETS_DIR = Path(__file__).parent / "assets"
-PRIMITIVES_PATH = ASSETS_DIR / "primitives.json"
-MESH_DIR = ASSETS_DIR / "meshes"
-MODEL_DIR = ASSETS_DIR / "models"
-
 COLLISION_MODES = ("primitives", "meshes", "none")
 
-# Links whose collision geometry belongs to the arm component. end_link is the
-# gripper mount; its geometry is served by the gripper component unless the
-# arm is configured with include_gripper_geometry.
-ARM_LINKS = ["base_link", "link1", "link2", "link3", "link4", "link5", "link6"]
-GRIPPER_BASE_LINK = "gripper_base"
 FINGER_TRAVEL_M = 0.05  # per finger, from the vendor URDF prismatic limits
 
 _STL_CONTENT_TYPE = "stl"
 _GLB_CONTENT_TYPE = "model/gltf-binary"
-
-
-def _load_primitives() -> Dict[str, dict]:
-    if not PRIMITIVES_PATH.exists():
-        return {}
-    data = json.loads(PRIMITIVES_PATH.read_text())
-    links = data.get("links", data)
-    return {k: v for k, v in links.items() if isinstance(v, dict) and "center" in v and "size" in v}
-
-
-PRIMITIVES = _load_primitives()
 
 
 def _fmt(values: Sequence[float]) -> str:
@@ -80,34 +58,27 @@ def _mesh_filename(link: str) -> str:
     return f"meshes/{link}.stl"
 
 
-def _read_mesh(link: str) -> Optional[bytes]:
-    path = MESH_DIR / f"{link}.stl"
+def _read_mesh(model: spatial.Model, key: str) -> Optional[bytes]:
+    path = model.assets_dir / "meshes" / f"{key}.stl"
     return path.read_bytes() if path.exists() else None
 
 
-def available_links(mode: str) -> List[str]:
-    if mode == "primitives":
-        return [l for l in ARM_LINKS if l in PRIMITIVES]
-    if mode == "meshes":
-        return [l for l in ARM_LINKS if (MESH_DIR / f"{l}.stl").exists()]
-    return []
-
-
 def arm_kinematics(
+    model: spatial.Model,
     mode: str = "primitives",
     include_gripper_geometry: bool = False,
     joint_limits_deg: Optional[Sequence[Tuple[float, float]]] = None,
 ):
-    """Return the get_kinematics tuple for the arm: (format, urdf_bytes[, meshes]).
+    """Return the get_kinematics tuple for ``model``: (format, urdf_bytes[, meshes]).
 
     ``joint_limits_deg`` (one (lo, hi) per revolute joint, base first) replaces the
     URDF's joint limits. viam-server checks joint targets against these, so an arm
-    whose motors count differently from the bundled URDF (the B601-RS) must serve
-    its own range or it cannot be moved through the API at all.
+    whose motors count differently from its URDF (the B601-RS) must serve its own
+    range or it cannot be moved through the API at all.
     """
     if mode not in COLLISION_MODES:
         raise ValueError(f"collision_geometry must be one of {COLLISION_MODES}")
-    tree = ET.parse(spatial.URDF_PATH)
+    tree = ET.parse(model.urdf_path)
     root = tree.getroot()
     if joint_limits_deg is not None:
         revolute = [j for j in root.findall("joint") if j.get("type") == "revolute"]
@@ -115,20 +86,20 @@ def arm_kinematics(
             joint.find("limit").set("lower", str(math.radians(lo)))
             joint.find("limit").set("upper", str(math.radians(hi)))
     meshes: Dict[str, Mesh] = {}
-    links = list(ARM_LINKS)
+    links = list(model.arm_links)
     if include_gripper_geometry:
-        links.append("end_link")
+        links.append(model.end_link)
     for link_el in root.findall("link"):
         name = link_el.get("name")
         if name not in links or mode == "none":
             continue
-        asset_key = GRIPPER_BASE_LINK if name == "end_link" else name
+        asset_key = model.mount_asset_key if name == model.end_link else name
         if mode == "primitives":
-            prim = PRIMITIVES.get(asset_key)
+            prim = model.primitives.get(asset_key)
             if prim:
                 link_el.append(_collision_box(prim["center"], prim["size"]))
         else:
-            data = _read_mesh(asset_key)
+            data = _read_mesh(model, asset_key)
             if data is not None:
                 filename = _mesh_filename(asset_key)
                 link_el.append(_collision_mesh(filename))
@@ -156,7 +127,9 @@ def _box_geometry(t_link, center_m: Sequence[float], size_m: Sequence[float], la
     )
 
 
-def arm_geometries(joint_degs: Sequence[float], include_gripper_geometry: bool = False) -> List[Geometry]:
+def arm_geometries(
+    model: spatial.Model, joint_degs: Sequence[float], include_gripper_geometry: bool = False
+) -> List[Geometry]:
     """Per-link bounding boxes posed by the current joint state, in the arm's base frame.
 
     Always uses the primitive boxes, even in ``meshes`` mode: the planner gets
@@ -164,36 +137,36 @@ def arm_geometries(joint_degs: Sequence[float], include_gripper_geometry: bool =
     usually want something cheap.
     """
     rads = [math.radians(d) for d in joint_degs]
-    transforms = spatial.link_transforms(rads)
+    transforms = model.link_transforms(rads)
     out = []
-    for idx, name in enumerate(spatial.LINK_ORDER):
-        if name in ARM_LINKS:
-            key = name
-        elif name == "end_link" and include_gripper_geometry:
-            key = GRIPPER_BASE_LINK
-        else:
+    for idx, name in enumerate(model.link_order):
+        if name == model.end_link and not include_gripper_geometry:
             continue
-        prim = PRIMITIVES.get(key)
+        key = model.mount_asset_key if name == model.end_link else name
+        prim = model.primitives.get(key)
         if not prim:
             continue
         out.append(_box_geometry(transforms[idx], prim["center"], prim["size"], name))
     return out
 
 
-def arm_3d_models(include_gripper: bool = False) -> Dict[str, Mesh]:
+def arm_3d_models(model: spatial.Model, include_gripper: bool = False) -> Dict[str, Mesh]:
     """GLB visual meshes keyed by link name, for the app's 3D view."""
     models: Dict[str, Mesh] = {}
-    names = list(ARM_LINKS)
+    names = list(model.arm_links)
     if include_gripper:
-        names += ["end_link", "finger_left_link", "finger_right_link"]
+        # finger GLBs exist only for DM; on RS the mount body is served and the fingers are skipped
+        names += [model.end_link, "finger_left_link", "finger_right_link"]
     for name in names:
-        path = MODEL_DIR / f"{name}.glb"
+        path = model.assets_dir / "models" / f"{name}.glb"
         if path.exists():
             models[name] = Mesh(content_type=_GLB_CONTENT_TYPE, mesh=path.read_bytes())
     return models
 
 
 # --- gripper ---
+# The gripper component is DM-only: the RS URDF ships gripper_end as a mount, not as a
+# 1-DoF gripper, so these always use the DM assets.
 
 
 def gripper_urdf(mode: str = "primitives") -> Tuple[bytes, Dict[str, Mesh]]:
@@ -203,17 +176,19 @@ def gripper_urdf(mode: str = "primitives") -> Tuple[bytes, Dict[str, Mesh]]:
     translation."""
     robot = ET.Element("robot", name="rebot_b601_gripper")
     meshes: Dict[str, Mesh] = {}
+    dm = spatial.MODELS["dm"]
 
     def add_link(name: str, asset: str, widen_y: float = 0.0, shift_y: float = 0.0):
         link = ET.SubElement(robot, "link", name=name)
         if mode == "none":
             return
-        if mode == "meshes" and _read_mesh(asset) is not None:
+        data = _read_mesh(dm, asset) if mode == "meshes" else None
+        if data is not None:
             filename = _mesh_filename(asset)
             link.append(_collision_mesh(filename))
-            meshes[filename] = Mesh(content_type=_STL_CONTENT_TYPE, mesh=_read_mesh(asset))
+            meshes[filename] = Mesh(content_type=_STL_CONTENT_TYPE, mesh=data)
             return
-        prim = PRIMITIVES.get(asset)
+        prim = dm.primitives.get(asset)
         if prim:
             center = list(prim["center"])
             size = list(prim["size"])
@@ -221,7 +196,7 @@ def gripper_urdf(mode: str = "primitives") -> Tuple[bytes, Dict[str, Mesh]]:
             size[1] += widen_y
             link.append(_collision_box(center, size))
 
-    add_link("gripper_base", GRIPPER_BASE_LINK)
+    add_link("gripper_base", "gripper_base")
     add_link("finger_left_link", "left_finger")
     # The right finger mirrors the left; model it as a static envelope over its travel.
     add_link("finger_right_link", "right_finger", widen_y=FINGER_TRAVEL_M, shift_y=-FINGER_TRAVEL_M / 2)
@@ -254,16 +229,17 @@ def gripper_kinematics(mode: str = "primitives"):
 def gripper_geometries(finger_travel_m: float) -> List[Geometry]:
     """Gripper boxes in the gripper's own frame for the given left-finger travel."""
     identity = spatial._transform([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])
+    dm = spatial.MODELS["dm"]
     out = []
-    prim = PRIMITIVES.get(GRIPPER_BASE_LINK)
+    prim = dm.primitives.get("gripper_base")
     if prim:
         out.append(_box_geometry(identity, prim["center"], prim["size"], "gripper_base"))
-    prim = PRIMITIVES.get("left_finger")
+    prim = dm.primitives.get("left_finger")
     if prim:
         c = list(prim["center"])
         c[1] += finger_travel_m
         out.append(_box_geometry(identity, c, prim["size"], "finger_left_link"))
-    prim = PRIMITIVES.get("right_finger")
+    prim = dm.primitives.get("right_finger")
     if prim:
         c = list(prim["center"])
         c[1] -= finger_travel_m

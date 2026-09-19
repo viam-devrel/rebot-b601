@@ -6,6 +6,7 @@ import pytest
 from viam.proto.component.arm import JointPositions
 
 from src.rebot_b601 import bus as bus_mod
+from src.rebot_b601 import spatial
 from src.rebot_b601.arm import ARM_CAN_IDS, B601Arm
 from src.rebot_b601.bus import BusError, SharedBus, canonical_device
 from src.rebot_b601.damiao import JointHealth, MotorFault
@@ -334,8 +335,6 @@ async def test_rs_manual_mode_has_no_gravity_feedforward(factory):
     arm = B601Arm.new(make_config("arm", **dict(RS, gravity_scale=1.0)), {})
     assert arm.gravity_scale == 0.0
     assert arm.manual_torques([0.0] * 6) == [0.0] * 6
-    with pytest.raises(NotImplementedError):
-        await arm.do_command({"gravity_torques": True})
     dm = B601Arm.new(make_config("dm", **dict(FAST, gravity_scale=0.5)), {})
     assert dm.gravity_scale == 0.5
 
@@ -346,3 +345,68 @@ async def test_raw_state_on_rs_reports_health_dicts(factory):
     for name in ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6"):
         assert r["raw_state"][name]["position_only"] is False
         assert r["raw_state"][name]["status"] == "ok"
+
+
+async def test_rs_arm_serves_the_rs_model(factory):
+    import xml.etree.ElementTree as ET
+
+    rs = B601Arm.new(make_config("arm", **RS), {})
+    dm = B601Arm.new(make_config("arm2", port="/dev/fake1"), {})
+    assert rs.model is spatial.MODELS["rs"] and dm.model is spatial.MODELS["dm"]
+    root = ET.fromstring((await rs.get_kinematics())[1])
+    assert root.get("name") == "rebot_b601_rs"
+    assert float(root.find("joint[@name='joint2']/limit").get("lower")) == pytest.approx(math.radians(-5.0))
+    p_rs = await rs.get_end_position()
+    p_dm = await dm.get_end_position()
+    assert math.isclose(p_rs.x, 301.7, abs_tol=0.5) and math.isclose(p_rs.z, 217.7, abs_tol=0.5)
+    assert not math.isclose(p_rs.x, p_dm.x, abs_tol=5.0)
+
+
+async def test_rs_manual_torques_use_the_rs_model_but_stay_zero_until_enabled(factory):
+    rs = B601Arm.new(make_config("arm", **RS), {})
+    assert rs.gravity_scale == 0.0  # still forced off until the bench check (Task 8)
+    assert rs.manual_torques([0] * 6) == [0.0] * 6
+    rs.gravity_scale = 1.0  # the guard, not an empty model, is what zeroes the torques
+    assert any(abs(t) > 0.1 for t in rs.manual_torques([0, 90, 0, 0, 0, 0]))
+
+
+def test_dm_manual_torques_clamp_to_the_dm_efforts(factory):
+    dm = B601Arm.new(make_config("arm", port="/dev/fake0", gravity_scale=1000.0), {})
+    taus = dm.manual_torques([0] * 6)
+    assert all(abs(t) <= e + 1e-9 for t, e in zip(taus, spatial.MODELS["dm"].effort_nm))
+    assert any(abs(t) == e for t, e in zip(taus, spatial.MODELS["dm"].effort_nm) if e)  # the clamp bit
+
+
+def test_missing_primitives_are_warned_about_once_at_configure(factory, caplog, monkeypatch, tmp_path):
+    import logging
+
+    # tmp_path holds no primitives.json, so this stands in for a variant whose assets are absent.
+    monkeypatch.setattr(
+        spatial, "MODELS", {**spatial.MODELS, "rs": spatial.Model("rs", spatial.RS_URDF_PATH, tmp_path, "gripper_end")}
+    )
+    with caplog.at_level(logging.WARNING, logger="src.rebot_b601.arm"):
+        B601Arm.new(make_config("arm", **RS), {})
+    assert sum(1 for r in caplog.records if "no collision primitives" in r.getMessage()) == 1
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="src.rebot_b601.arm"):
+        B601Arm.new(make_config("arm2", port="/dev/fake1"), {})  # DM has assets
+    assert not any("no collision primitives" in r.getMessage() for r in caplog.records)
+
+
+async def test_rs_gravity_torques_command_reports_but_does_not_apply(factory):
+    arm = B601Arm.new(make_config("arm", **RS), {})
+    r = await arm.do_command({"gravity_torques": True})
+    assert "unverified" in r["gravity_torques"]["note"]
+    assert len(r["gravity_torques"]["torques_nm"]) == 6
+    assert arm.gravity_scale == 0.0  # reported, never applied
+    dm = B601Arm.new(make_config("arm2", **dict(FAST, port="/dev/fake1")), {})
+    taus = (await dm.do_command({"gravity_torques": True}))["gravity_torques"]
+    assert len(taus) == 6 and all(isinstance(t, float) for t in taus)
+
+
+async def test_rs_geometries_follow_the_rs_model(factory):
+    rs = B601Arm.new(make_config("arm", **RS), {})
+    geos = await rs.get_geometries()
+    assert [g.label for g in geos] == rs.model.arm_links
+    assert geos[2].center.x < 0  # link2's box sits behind the base at the rest pose (upper arm points back)
+    assert geos[2].box.dims_mm.x == pytest.approx(326.53, abs=0.1)  # the RS link2 box; DM's is ~321

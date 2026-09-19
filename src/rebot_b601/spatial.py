@@ -1,4 +1,4 @@
-"""Forward kinematics for the reBot B601-DM, plus rotation -> Viam orientation
+"""Forward kinematics for the reBot B601 (DM and RS models), plus rotation -> Viam orientation
 vector conversion.
 
 The kinematic chain is parsed from the bundled URDF so there is a single source
@@ -8,11 +8,15 @@ spatialmath.QuatToOV (spatialmath/quaternion.go) so poses reported here match
 what the RDK computes from the same URDF.
 """
 
+import functools
+import json
 import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 URDF_PATH = Path(__file__).parent / "rebot_b601_dm.urdf"
+RS_URDF_PATH = Path(__file__).parent / "rebot_b601_rs.urdf"
+ASSETS_DIR = Path(__file__).parent / "assets"
 
 _POLE_RADIUS = 1e-4  # orientationVectorPoleRadius in the RDK
 _ANGLE_EPSILON = 1e-4  # defaultAngleEpsilon in the RDK
@@ -77,7 +81,7 @@ class _Joint:
         self.effort = float(limit.get("effort") or 0.0) if limit is not None else 0.0
 
 
-def load_chain(urdf_path=URDF_PATH):
+def load_chain(urdf_path):
     """Return the URDF joints ordered base -> end effector."""
     root = ET.parse(urdf_path).getroot()
     children = {j.find("parent").get("link"): j for j in root.findall("joint")}
@@ -90,30 +94,6 @@ def load_chain(urdf_path=URDF_PATH):
         chain.append(j)
         link = children[link].find("child").get("link")
     return chain
-
-
-_CHAIN = load_chain()
-REVOLUTE_JOINTS = [j for j in _CHAIN if j.type == "revolute"]
-JOINT_LIMITS_DEG = [(math.degrees(j.lower), math.degrees(j.upper)) for j in REVOLUTE_JOINTS]
-JOINT_EFFORT_NM = [j.effort for j in REVOLUTE_JOINTS]
-
-
-def forward_kinematics(joint_rads):
-    """Compute the end-effector transform for the given revolute joint angles.
-
-    Returns ((x, y, z) in meters, 3x3 rotation matrix) of end_link in base_link.
-    """
-    t = _transform([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])
-    qi = 0
-    for joint in _CHAIN:
-        t = _mat_mul(t, joint.origin)
-        if joint.type == "revolute":
-            rot = _rot_axis_angle(joint.axis, joint_rads[qi])
-            t = _mat_mul(t, _transform(rot, [0, 0, 0]))
-            qi += 1
-    pos = (t[0][3], t[1][3], t[2][3])
-    rot = [row[:3] for row in t[:3]]
-    return pos, rot
 
 
 def rotation_to_quat(r):
@@ -217,14 +197,6 @@ def quat_to_orientation_vector(q):
     return (ox, oy, oz, theta)
 
 
-def end_position(joint_degs):
-    """FK for Viam: joint angles in degrees -> (x_mm, y_mm, z_mm, ox, oy, oz, theta_deg)."""
-    rads = [math.radians(d) for d in joint_degs]
-    (x, y, z), rot = forward_kinematics(rads)
-    ox, oy, oz, theta = quat_to_orientation_vector(rotation_to_quat(rot))
-    return (x * 1000.0, y * 1000.0, z * 1000.0, ox, oy, oz, math.degrees(theta))
-
-
 # --- per-link transforms, inertials, gravity, and Viam pose helpers ---
 
 GRAVITY_M_S2 = 9.80665
@@ -237,7 +209,7 @@ class _LinkInertial:
         self.com = com_xyz
 
 
-def _load_links(urdf_path=URDF_PATH):
+def _load_links(urdf_path):
     """Return the link names in chain order (base -> end) and their inertials."""
     root = ET.parse(urdf_path).getroot()
     joints = root.findall("joint")
@@ -259,27 +231,6 @@ def _load_links(urdf_path=URDF_PATH):
         xyz = [float(v) for v in (origin.get("xyz") if origin is not None else "0 0 0").split()]
         inertials[el.get("name")] = _LinkInertial(el.get("name"), float(mass_el.get("value")), xyz)
     return order, inertials
-
-
-LINK_ORDER, LINK_INERTIALS = _load_links()
-
-
-def link_transforms(joint_rads):
-    """4x4 transforms of every link frame (in chain order) in the base frame.
-
-    The first entry is the identity (base_link); the last is end_link.
-    """
-    t = _transform([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])
-    out = [t]
-    qi = 0
-    for joint in _CHAIN:
-        t = _mat_mul(t, joint.origin)
-        if joint.type == "revolute":
-            rot = _rot_axis_angle(joint.axis, joint_rads[qi])
-            t = _mat_mul(t, _transform(rot, [0, 0, 0]))
-            qi += 1
-        out.append(t)
-    return out
 
 
 def apply(t, p):
@@ -307,44 +258,106 @@ def transform_to_viam_pose(t, scale_mm=1000.0):
     return (t[0][3] * scale_mm, t[1][3] * scale_mm, t[2][3] * scale_mm, ox, oy, oz, math.degrees(theta))
 
 
-def gravity_torques(joint_rads, gravity=(0.0, 0.0, -GRAVITY_M_S2), extra_payload_kg=0.0):
-    """Joint torques (Nm) that gravity exerts on each revolute joint, i.e. the
-    torque a motor must *counteract* is the negative of each value.
+class Model:
+    """One arm variant's kinematic model: chain, limits, inertials and the assets built for it."""
 
-    Uses the URDF link masses and centers of mass. ``gravity`` is the gravity
-    vector expressed in the base frame; change it for non-upright mounts.
-    ``extra_payload_kg`` is added at the end_link origin.
-    """
-    transforms = link_transforms(joint_rads)
-    # joint i sits at the origin of link i+1's frame; axis expressed in base frame
-    joint_frames, joint_axes = [], []
-    qi = 0
-    for idx, joint in enumerate(_CHAIN):
-        if joint.type == "revolute":
-            frame = transforms[idx + 1]
-            joint_frames.append((frame[0][3], frame[1][3], frame[2][3]))
-            joint_axes.append(rotate(frame, joint.axis))
-            qi += 1
-    torques = [0.0] * len(joint_frames)
-    masses = []
-    for idx, name in enumerate(LINK_ORDER):
-        inertial = LINK_INERTIALS.get(name)
-        if inertial is None:
-            continue
-        com_world = apply(transforms[idx], inertial.com)
-        masses.append((inertial.mass, com_world, idx))
-    if extra_payload_kg:
-        end = transforms[-1]
-        masses.append((extra_payload_kg, (end[0][3], end[1][3], end[2][3]), len(LINK_ORDER) - 1))
-    for mass, com, link_idx in masses:
-        force = (mass * gravity[0], mass * gravity[1], mass * gravity[2])
-        # every revolute joint upstream of this link feels the torque
+    def __init__(self, name: str, urdf_path: Path, assets_dir: Path, mount_asset_key: str):
+        self.name = name
+        self.urdf_path = urdf_path
+        self.assets_dir = assets_dir
+        self.mount_asset_key = mount_asset_key  # asset stem of the mount link's body (gripper_base on DM)
+        self.chain = load_chain(urdf_path)
+        self.revolute = [j for j in self.chain if j.type == "revolute"]
+        self.effort_nm = [j.effort for j in self.revolute]
+        self.link_order, self.link_inertials = _load_links(urdf_path)
+        self.end_link = self.link_order[-1]
+        # every link but the mount; the mount's geometry belongs to the gripper component
+        self.arm_links = self.link_order[:-1]
+
+    @functools.cached_property
+    def primitives(self) -> dict:
+        """Axis-aligned collision boxes per asset key from assets_dir/primitives.json."""
+        path = self.assets_dir / "primitives.json"
+        if not path.exists():
+            return {}
+        data = json.loads(path.read_text())
+        links = data.get("links", data)
+        return {k: v for k, v in links.items() if isinstance(v, dict) and "center" in v and "size" in v}
+
+    def forward_kinematics(self, joint_rads):
+        """Compute the end-effector transform for the given revolute joint angles.
+
+        Returns ((x, y, z) in meters, 3x3 rotation matrix) of end_link in base_link.
+        """
+        t = self.link_transforms(joint_rads)[-1]
+        return (t[0][3], t[1][3], t[2][3]), [row[:3] for row in t[:3]]
+
+    def link_transforms(self, joint_rads):
+        """4x4 transforms of every link frame (in chain order) in the base frame.
+
+        The first entry is the identity (base_link); the last is end_link.
+        """
+        t = _transform([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])
+        out = [t]
         qi = 0
-        for j_idx, joint in enumerate(_CHAIN):
-            if joint.type != "revolute":
+        for joint in self.chain:
+            t = _mat_mul(t, joint.origin)
+            if joint.type == "revolute":
+                rot = _rot_axis_angle(joint.axis, joint_rads[qi])
+                t = _mat_mul(t, _transform(rot, [0, 0, 0]))
+                qi += 1
+            out.append(t)
+        return out
+
+    def end_position(self, joint_degs):
+        """FK for Viam: joint angles in degrees -> (x_mm, y_mm, z_mm, ox, oy, oz, theta_deg)."""
+        rads = [math.radians(d) for d in joint_degs]
+        (x, y, z), rot = self.forward_kinematics(rads)
+        ox, oy, oz, theta = quat_to_orientation_vector(rotation_to_quat(rot))
+        return (x * 1000.0, y * 1000.0, z * 1000.0, ox, oy, oz, math.degrees(theta))
+
+    def gravity_torques(self, joint_rads, gravity=(0.0, 0.0, -GRAVITY_M_S2), extra_payload_kg=0.0):
+        """Joint torques (Nm) that gravity exerts on each revolute joint, i.e. the
+        torque a motor must *counteract* is the negative of each value.
+
+        Uses the URDF link masses and centers of mass. ``gravity`` is the gravity
+        vector expressed in the base frame; change it for non-upright mounts.
+        ``extra_payload_kg`` is added at the end_link origin.
+        """
+        transforms = self.link_transforms(joint_rads)
+        # joint i sits at the origin of link i+1's frame; axis expressed in base frame
+        joint_frames, joint_axes = [], []
+        for idx, joint in enumerate(self.chain):
+            if joint.type == "revolute":
+                frame = transforms[idx + 1]
+                joint_frames.append((frame[0][3], frame[1][3], frame[2][3]))
+                joint_axes.append(rotate(frame, joint.axis))
+        torques = [0.0] * len(joint_frames)
+        masses = []
+        for idx, name in enumerate(self.link_order):
+            inertial = self.link_inertials.get(name)
+            if inertial is None:
                 continue
-            if j_idx + 1 <= link_idx:
-                r = (com[0] - joint_frames[qi][0], com[1] - joint_frames[qi][1], com[2] - joint_frames[qi][2])
-                torques[qi] += _dot(_cross(r, force), joint_axes[qi])
-            qi += 1
-    return torques
+            com_world = apply(transforms[idx], inertial.com)
+            masses.append((inertial.mass, com_world, idx))
+        if extra_payload_kg:
+            end = transforms[-1]
+            masses.append((extra_payload_kg, (end[0][3], end[1][3], end[2][3]), len(self.link_order) - 1))
+        for mass, com, link_idx in masses:
+            force = (mass * gravity[0], mass * gravity[1], mass * gravity[2])
+            # every revolute joint upstream of this link feels the torque
+            qi = 0
+            for j_idx, joint in enumerate(self.chain):
+                if joint.type != "revolute":
+                    continue
+                if j_idx + 1 <= link_idx:
+                    r = (com[0] - joint_frames[qi][0], com[1] - joint_frames[qi][1], com[2] - joint_frames[qi][2])
+                    torques[qi] += _dot(_cross(r, force), joint_axes[qi])
+                qi += 1
+        return torques
+
+
+MODELS = {
+    "dm": Model("dm", URDF_PATH, ASSETS_DIR, "gripper_base"),
+    "rs": Model("rs", RS_URDF_PATH, ASSETS_DIR / "rs", "gripper_end"),
+}

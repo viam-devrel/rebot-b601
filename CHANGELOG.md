@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.0 (2026-09-18)
+
+### Added
+- The B601-RS serves its own kinematic model: a bundled RS URDF (Seeed `reBotArm_control_py` `urdf/RS` @ `76512ea`,
+  mount link named `end_link` as on DM), RS collision boxes and decimated meshes, and per-link GLBs coloured from
+  the URDF materials. `get_end_position`, `get_kinematics`, `get_geometries`, `Get3DModels` and motion-service
+  `move_to_position` describe the RS arm.
+- `tools/build_assets.py --variant {dm,rs}`; `make assets` builds RS, `make assets-dm` rebuilds DM deliberately.
+- `{"gravity_torques": true}` on RS returns the RS model's torques with an "unverified" note instead of refusing.
+- `tests/smoke_hardware.py --gravity-check` prints measured holding torque next to the model's gravity torque
+  per joint, the bench check that gates RS gravity compensation.
+
+### Changed
+- `spatial` exposes `MODELS["dm"|"rs"]` and the FK, gravity and asset helpers live on the model; the DM-only module-level names are gone. DM's served kinematics
+  payload is byte-identical to 0.4.0 (pinned by `tests/test_dm_baseline.py`).
+- A model with no collision primitives logs a warning at configure.
+
+### Not yet on RS
+- Gravity compensation in manual mode (model exists, pending the bench check), the gripper component, discovery.
+
+### Licence note
+- Seeed's `reBotArm_control_py` repository, the source of the RS URDF and meshes, ships no licence file. The RS
+  assets are redistributed under the CERN-OHL-W-2.0 terms assumed by analogy with the sibling `reBot-DevArm`
+  package (see `src/rebot_b601/assets/rs/ATTRIBUTION.md`); confirm with Seeed before a registry release.
+
 ## 0.4.0 (2026-09-18)
 
 ### Added
