@@ -44,6 +44,8 @@ attribution.
 | `meshes/link5.stl` | 149.6 KB | decimated from meshes/shared/link5.STL |
 | `meshes/link6.stl` | 149.6 KB | decimated from meshes/shared/link6.STL |
 | `meshes/gripper_end.stl` | 149.6 KB | decimated from meshes/shared/gripper_end.STL |
+| `meshes/gripper_left.stl` | 149.6 KB | decimated from meshes/shared/gripper_left.STL |
+| `meshes/gripper_right.stl` | 149.6 KB | decimated from meshes/shared/gripper_right.STL |
 | `models/base_link.glb` | 193.4 KB | merged 1 visual part(s) |
 | `models/link1.glb` | 192.9 KB | merged 1 visual part(s) |
 | `models/link2.glb` | 215.6 KB | merged 4 visual part(s) |
@@ -52,12 +54,16 @@ attribution.
 | `models/link5.glb` | 199.5 KB | merged 3 visual part(s) |
 | `models/link6.glb` | 193.4 KB | merged 1 visual part(s) |
 | `models/end_link.glb` | 197.2 KB | merged 3 visual part(s) |
-| `primitives.json` | 8.1 KB | generated |
+| `models/finger_left_link.glb` | 200.5 KB | merged 2 visual part(s) |
+| `models/finger_right_link.glb` | 200.5 KB | merged 2 visual part(s) |
+| `primitives.json` | 9.9 KB | generated |
 
 ## Upstream source files used
 
 - `urdf/RS/meshes/shared/base_link.STL` (sha256 af1df69639fb1f10...)
 - `urdf/RS/meshes/shared/gripper_end.STL` (sha256 d52ed4bb37754fa9...)
+- `urdf/RS/meshes/shared/gripper_left.STL` (sha256 1f604d582dc23814...)
+- `urdf/RS/meshes/shared/gripper_right.STL` (sha256 b6b5c4df5b71c24e...)
 - `urdf/RS/meshes/shared/link1.STL` (sha256 60860556dd91b15e...)
 - `urdf/RS/meshes/shared/link2.STL` (sha256 f3653afa47f7f2ee...)
 - `urdf/RS/meshes/shared/link3.STL` (sha256 3d6502345c14bd2d...)
@@ -69,6 +75,8 @@ attribution.
 - `urdf/RS/meshes/visual/cnc4.STL` (sha256 6a85571eaedbbf06...)
 - `urdf/RS/meshes/visual/cnc5.STL` (sha256 1772159cd66b600c...)
 - `urdf/RS/meshes/visual/cnc7.STL` (sha256 2d6088744c7d5195...)
+- `urdf/RS/meshes/visual/cnc_left.STL` (sha256 8f8ed951fad05dd5...)
+- `urdf/RS/meshes/visual/cnc_right.STL` (sha256 d7be82297465675b...)
 - `urdf/RS/meshes/visual/motor_2_3.STL` (sha256 509d445fa6cade76...)
 - `urdf/RS/meshes/visual/motor_4.STL` (sha256 2251e479b009b2c1...)
 - `urdf/RS/meshes/visual/motor_5.STL` (sha256 87a9380b8441116d...)
@@ -82,3 +90,5 @@ attribution.
 - `urdf/RS/meshes/visual/pla3_seeed_wordmark_backing.STL` (sha256 b837592ca2910576...)
 - `urdf/RS/meshes/visual/pla5_green.STL` (sha256 d8810ec3fe0a9cb5...)
 - `urdf/RS/meshes/visual/pla7_green.STL` (sha256 00b3c3d51f6f756a...)
+- `urdf/RS/meshes/visual/pla_left.STL` (sha256 0e774ab0bf297579...)
+- `urdf/RS/meshes/visual/pla_right.STL` (sha256 43556446abbbecd8...)

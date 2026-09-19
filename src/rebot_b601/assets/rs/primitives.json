@@ -112,6 +112,32 @@
         0.18407,
         0.081804
       ]
+    },
+    "gripper_left": {
+      "urdf_link": "finger_left_link",
+      "center": [
+        -7e-06,
+        0.002366,
+        -0.011998
+      ],
+      "size": [
+        0.03844,
+        0.088609,
+        0.093349
+      ]
+    },
+    "gripper_right": {
+      "urdf_link": "finger_right_link",
+      "center": [
+        7e-06,
+        -0.002366,
+        -0.011998
+      ],
+      "size": [
+        0.03844,
+        0.088609,
+        0.093349
+      ]
     }
   },
   "triangles": {
@@ -146,6 +172,14 @@
     "gripper_end": {
       "original": 80756,
       "decimated": 3062
+    },
+    "gripper_left": {
+      "original": 17246,
+      "decimated": 3062
+    },
+    "gripper_right": {
+      "original": 17246,
+      "decimated": 3062
     }
   },
   "decimation": {
@@ -156,7 +190,9 @@
     "link4": "quadric",
     "link5": "quadric",
     "link6": "quadric",
-    "gripper_end": "quadric"
+    "gripper_end": "quadric",
+    "gripper_left": "quadric",
+    "gripper_right": "quadric"
   },
   "visual_models": {
     "base_link": {
@@ -356,6 +392,48 @@
         }
       },
       "bytes": 201892
+    },
+    "finger_left_link": {
+      "faces_original": 17246,
+      "faces_decimated": 11306,
+      "methods": {
+        "pla_left": "quadric",
+        "cnc_left": "quadric"
+      },
+      "parts": {
+        "pla_left": {
+          "source": "meshes/visual/pla_left.STL",
+          "color": "#171B1A",
+          "urdf_material": "rs_pla_black"
+        },
+        "cnc_left": {
+          "source": "meshes/visual/cnc_left.STL",
+          "color": "#B8C2BA",
+          "urdf_material": "rs_anodized_silver"
+        }
+      },
+      "bytes": 205292
+    },
+    "finger_right_link": {
+      "faces_original": 17246,
+      "faces_decimated": 11306,
+      "methods": {
+        "pla_right": "quadric",
+        "cnc_right": "quadric"
+      },
+      "parts": {
+        "pla_right": {
+          "source": "meshes/visual/pla_right.STL",
+          "color": "#171B1A",
+          "urdf_material": "rs_pla_black"
+        },
+        "cnc_right": {
+          "source": "meshes/visual/cnc_right.STL",
+          "color": "#B8C2BA",
+          "urdf_material": "rs_anodized_silver"
+        }
+      },
+      "bytes": 205300
     }
   },
   "skipped_visual_meshes": []

@@ -135,8 +135,16 @@ VARIANTS: dict[str, Variant] = {
             "link5": "link5",
             "link6": "link6",
             "gripper_end": "gripper_end",
+            "gripper_left": "gripper_left",
+            "gripper_right": "gripper_right",
         },
-        rename={"gripper_end": "end_link"},
+        rename={
+            "gripper_end": "end_link",
+            # STLs and primitives are keyed by the vendor mesh stem, GLBs by the renamed link.
+            # arm_3d_models asks for the DM finger names, so RS must produce the same filenames.
+            "gripper_left": "finger_left_link",
+            "gripper_right": "finger_right_link",
+        },
         blurb="Seeed Studio reBotArm_control_py B601-RS description package (urdf/RS)",
         color_rules=[],  # the RS URDF declares its finishes as <material> elements
         licence=[
