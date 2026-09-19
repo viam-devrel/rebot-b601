@@ -340,9 +340,15 @@ collision boxes, meshes and GLBs; the arm picks the model from `variant`.
   In `meshes` mode the decimated STLs are shipped in the same response, so viam-server needs no files.
 - `get_geometries` returns the per-link bounding boxes posed by the current joint state.
 - `Get3DModels` returns per-link GLB visual meshes for the app's 3D view.
-- The gripper serves a one-DoF URDF (left finger on a prismatic joint, right finger as a static
-  envelope). Its kinematic input is the left finger's travel in metres, 0 (closed) to the variant's
-  travel when open: 0.05 on DM, 0.0715 on RS.
+- The gripper serves a one-DoF URDF: `tool_mount` -> `gripper_base` -> `finger_left_link` on a
+  prismatic joint. Its kinematic input is the left finger's travel in metres, 0 (closed) to the
+  variant's travel when open: 0.05 on DM, 0.0715 on RS.
+  The model is a single chain with `finger_left_link` as its only leaf, because viam-server rejects
+  a URDF model with more than one end effector. The right finger therefore is not a link of its own:
+  the envelope covering its full travel is unioned into `gripper_base`'s box, which is why that box
+  is bigger than the body it is named after (DM 107 x 201 x 68 mm, RS 157 x 198 x 82 mm) and why
+  `gripper_base` stays a box even in `meshes` mode -- a mesh cannot also cover the right finger.
+  `get_geometries` is not a frame system and still reports all three parts, each at its real size.
 - DM meshes come from Seeed's `reBot-DevArm` repository (`src/rebot_b601/assets/ATTRIBUTION.md`), RS
   meshes from `reBotArm_control_py` (`src/rebot_b601/assets/rs/ATTRIBUTION.md`; see the licence note under
   B601-RS). Rebuild with `python tools/build_assets.py --variant {dm,rs}`.

@@ -83,6 +83,20 @@
   which is the idiomatic Viam answer.
 
 ### Fixed
+- The gripper's geometry and kinematics show up in the app's 3D scene and in the frame system at all.
+  The served gripper model had two end effectors -- `finger_left_link` on the prismatic joint and a
+  static `finger_right_link` -- and viam-server rejects a URDF model with more than one, so the
+  gripper never loaded, on either variant (`buildCache # of frames: 2`, and nothing else in the log
+  to say why). This predates the frame split and RobStride support: the gripper's model has had that
+  shape since it was written, and nothing exercised it until now. The model is now one chain,
+  `tool_mount` -> `gripper_base` -> `finger_left_link`, and the right finger's static travel envelope
+  is unioned into `gripper_base`'s collision box (DM 107 x 201 x 68 mm, RS 157 x 198 x 82 mm) rather
+  than dropped, since a planner blind to half the jaw is worse than a coarse one. A link gets exactly
+  one `<collision>` -- the RDK keeps the first and discards the rest in silence -- so the union is the
+  only way to carry that volume, and it is why `gripper_base` now serves a box even in `meshes` mode.
+  `get_geometries` is unchanged and still reports all three parts at their real sizes; the served
+  model is deliberately the coarser of the two. `tests/test_dm_baseline.py` re-pins the three DM
+  gripper payload hashes; the arm payloads, the mesh bytes and the GLBs did not move.
 - The RS jaw no longer lurches when the resource starts or restarts. Configure enabled the motor and
   set the mode but never commanded a target, and a RobStride in profile position resumes its last
   internal setpoint, which after a restart is stale. It now reads the jaw position before enabling and

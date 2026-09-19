@@ -164,17 +164,66 @@ def arm_3d_models(model: spatial.Model) -> Dict[str, Mesh]:
 # --- gripper ---
 
 
+def _aabb(points: Sequence[Sequence[float]]) -> Tuple[List[float], List[float]]:
+    """(center, size) of the axis-aligned box bounding ``points``."""
+    lo = [min(p[i] for p in points) for i in range(3)]
+    hi = [max(p[i] for p in points) for i in range(3)]
+    return ([(lo[i] + hi[i]) / 2 for i in range(3)], [hi[i] - lo[i] for i in range(3)])
+
+
+def _box_corners(center: Sequence[float], size: Sequence[float], transform=None):
+    out = []
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            for sz in (-1, 1):
+                p = [center[i] + s * size[i] / 2 for i, s in enumerate((sx, sy, sz))]
+                out.append(spatial.apply(transform, p) if transform is not None else p)
+    return out
+
+
+def gripper_base_box(model: spatial.Model) -> Optional[Tuple[List[float], List[float]]]:
+    """gripper_base's single collision body: the axis-aligned union, in gripper_base's frame,
+    of the body box and the right finger's static travel envelope.
+
+    The served model has to be one chain with exactly one leaf, because viam-server's URDF
+    parser (``referenceframe.ParseConfig``) rejects a model with more than one end effector,
+    and a link carries exactly one ``<collision>``, because ``UnmarshalModelXML`` keeps
+    ``Collision[0]`` and drops the rest without a word. So the right finger can be neither its
+    own leaf link nor a second box on this one, and its volume is folded in here instead of
+    disappearing. Over-approximating is the safe direction for a planner; ``gripper_geometries``
+    still reports the three precise boxes.
+    """
+    g = model.gripper
+    base = model.primitives.get(model.mount_asset_key)
+    if not base:
+        return None
+    corners = _box_corners(base["center"], base["size"])
+    right = model.primitives.get(g.right_key)
+    if right:
+        axis_i = max(range(3), key=lambda i: abs(g.axis[i]))
+        center, size = list(right["center"]), list(right["size"])
+        center[axis_i] += g.right_travel_sign * g.travel_m / 2
+        size[axis_i] += g.travel_m
+        xyz, rpy = g.right_origin
+        corners += _box_corners(center, size, spatial._transform(spatial._rot_rpy(*rpy), list(xyz)))
+    return _aabb(corners)
+
+
 def gripper_urdf(model: spatial.Model, mode: str = "primitives") -> Tuple[bytes, Dict[str, Mesh]]:
-    """A one-DoF gripper model: base + left finger on a prismatic joint + a
-    right-finger envelope covering its full travel. Root frame = the arm's tool
-    mount, which is where the served arm chain ends, so configure the gripper with
-    the arm as frame parent and zero translation."""
+    """A one-DoF gripper model: base + left finger on a prismatic joint. Root frame = the
+    arm's tool mount, which is where the served arm chain ends, so configure the gripper with
+    the arm as frame parent and zero translation.
+
+    The left finger is the model's only leaf and gripper_base carries the right finger's
+    travel envelope (see ``gripper_base_box``), so the served model is coarser than the
+    geometries ``gripper_geometries`` reports. That asymmetry is deliberate: the model must
+    obey the RDK's one-leaf and one-collision-per-link rules, GetGeometries need not.
+    """
     robot = ET.Element("robot", name="rebot_b601_gripper")
     meshes: Dict[str, Mesh] = {}
     g = model.gripper
-    axis_i = max(range(3), key=lambda i: abs(g.axis[i]))
 
-    def add_link(name: str, asset: str, widen: float = 0.0, shift: float = 0.0):
+    def add_link(name: str, asset: str):
         link = ET.SubElement(robot, "link", name=name)
         if mode == "none":
             return
@@ -186,11 +235,7 @@ def gripper_urdf(model: spatial.Model, mode: str = "primitives") -> Tuple[bytes,
             return
         prim = model.primitives.get(asset)
         if prim:
-            center = list(prim["center"])
-            size = list(prim["size"])
-            center[axis_i] += shift
-            size[axis_i] += widen
-            link.append(_collision_box(center, size))
+            link.append(_collision_box(prim["center"], prim["size"]))
 
     mount_joint = model.chain[-1]  # end_joint: the tool mount -> mount plate transform
     # The gripper's model starts where the arm's ends. This fixed joint carries that
@@ -202,28 +247,21 @@ def gripper_urdf(model: spatial.Model, mode: str = "primitives") -> Tuple[bytes,
     ET.SubElement(j, "parent", link="tool_mount")
     ET.SubElement(j, "child", link="gripper_base")
 
-    add_link("gripper_base", model.mount_asset_key)
+    # gripper_base always carries the union box, even in meshes mode: a mesh cannot also cover
+    # the right finger's envelope, and losing that volume would blind the planner to half the jaw.
+    base = ET.SubElement(robot, "link", name="gripper_base")
+    box = gripper_base_box(model) if mode != "none" else None
+    if box:
+        base.append(_collision_box(*box))
     add_link("finger_left_link", g.left_key)
-    # The right finger mirrors the left; model it as a static envelope over its travel.
-    add_link(
-        "finger_right_link",
-        g.right_key,
-        widen=g.travel_m,
-        shift=g.right_travel_sign * g.travel_m / 2,
-    )
 
-    (lxyz, lrpy), (rxyz, rrpy) = g.left_origin, g.right_origin
+    (lxyz, lrpy) = g.left_origin
     j = ET.SubElement(robot, "joint", name="finger_left", type="prismatic")
     ET.SubElement(j, "origin", xyz=_fmt(lxyz), rpy=_fmt(lrpy))
     ET.SubElement(j, "parent", link="gripper_base")
     ET.SubElement(j, "child", link="finger_left_link")
     ET.SubElement(j, "axis", xyz=_fmt(g.axis))
     ET.SubElement(j, "limit", lower="0", upper=f"{g.travel_m}", effort="8", velocity="0.08")
-
-    j = ET.SubElement(robot, "joint", name="finger_right", type="fixed")
-    ET.SubElement(j, "origin", xyz=_fmt(rxyz), rpy=_fmt(rrpy))
-    ET.SubElement(j, "parent", link="gripper_base")
-    ET.SubElement(j, "child", link="finger_right_link")
 
     tree = ET.ElementTree(robot)
     ET.indent(tree, space="  ")
@@ -240,7 +278,13 @@ def gripper_kinematics(model: spatial.Model, mode: str = "primitives"):
 
 def gripper_geometries(model: spatial.Model, finger_travel_m: float) -> List[Geometry]:
     """Gripper boxes in the gripper's own frame (the tool mount) for the given
-    left-finger travel."""
+    left-finger travel.
+
+    Three boxes, one per real part, where the served model has two links: GetGeometries is not
+    a frame system, so the RDK's one-leaf and one-collision-per-link rules do not apply and the
+    right finger is reported where it actually is instead of folded into gripper_base's envelope
+    (see ``gripper_base_box``). Finer here, coarser there, on purpose.
+    """
     g = model.gripper
     mj = model.chain[-1]
     # Same transform the served URDF's tool_mount_joint carries: the primitives are

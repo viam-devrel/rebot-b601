@@ -19,6 +19,15 @@ first. Every DM mesh byte therefore moved, and the visual GLBs grew to spend the
 budget a wrong bytes-per-face estimate had left unused. The six URDF payload hashes did
 not move: the URDF text names mesh files, it does not embed their bytes.
 
+The three gripper payload hashes were re-pinned once more when the gripper's model was folded to
+a single chain. It served two leaves -- finger_left_link and a static finger_right_link -- and
+viam-server's ParseConfig rejects a URDF model with more than one end effector, so the gripper
+never loaded into the frame system at all. finger_right_link is gone from the model and its travel
+envelope is unioned into gripper_base's box. GRIPPER_MESH_SHAS shrank with it: gripper_base now
+carries that union box in every mode (a mesh cannot also cover the right finger), so meshes mode
+serves only the left finger's STL. The surviving mesh's bytes did not change, and neither did the
+arm payloads or the GLBs.
+
 Note the two naming conventions: mesh keys are gripper_base/left_finger/right_finger while
 geometry labels are gripper_base/finger_left_link/finger_right_link."""
 
@@ -43,13 +52,11 @@ MESH_SHAS = {  # meshes/<link>.stl -> sha256 of the bytes served in meshes mode
     "meshes/link5.stl": "07baaabd37acf17b3441fddabf8a50d71039bd66cff9110c2ba72844f6234149",
     "meshes/link6.stl": "ef30182a5d6117990641d8cf72b20256ca419a23e28e0af3565573448488b4b7",
 }
-GRIPPER_PRIMITIVES_SHA = "72a1c45e8a83dfee1618f16efc4429ab1f72ae6df14d7ea9869ab8ec424c8023"
-GRIPPER_NONE_SHA = "2c2051997b0926ccb97ef3678476872bc70e7007f4fb0e1ef2814bc40dcc08b8"
-GRIPPER_MESHES_URDF_SHA = "50563347a81351788b273ffa8c09243449202cea17e1c04ba8a3840b5dc0dfdc"
+GRIPPER_PRIMITIVES_SHA = "ee615edf92b23de569cdd125bdeb09cf890839148b57fafa8eb3fb9d610719fe"
+GRIPPER_NONE_SHA = "5fa225dbe789dbf6b6dc80a3d2e21bfdd3b85179c218a230abdc2a11600e22db"
+GRIPPER_MESHES_URDF_SHA = "997ed89b2779854b3ee89ef5ea2e07f66820670af7471e56374008d71cf98e4b"
 GRIPPER_MESH_SHAS = {  # meshes/<part>.stl -> sha256 of the bytes served in meshes mode
-    "meshes/gripper_base.stl": "6e9b8031b826824ba271c49b343f1040130ca2290c7255b5b668c777f5b01f51",
     "meshes/left_finger.stl": "d24a8c610c8f342f9aa4a528416f52e5a291c90e52c8d6c0a032cbd804430557",
-    "meshes/right_finger.stl": "48e0db64b455544e131e558e201ab296e87012450d28d880fa562ed43cfb335a",
 }
 GLB_SIZES = {  # models/<link>.glb -> bytes
     "base_link.glb": 305660,

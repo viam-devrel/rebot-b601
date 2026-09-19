@@ -102,10 +102,53 @@ def test_gripper_urdf_has_one_prismatic_dof(model):
     root = ET.fromstring(data)
     assert [j.get("type") for j in root.findall("joint")].count("prismatic") == 1
     # Link names are identical across variants so frame-system names stay stable.
-    assert _links_with_collision(data) == {"gripper_base", "finger_left_link", "finger_right_link"}
+    assert _links_with_collision(data) == {"gripper_base", "finger_left_link"}
     limit = root.find("joint[@name='finger_left']/limit")
     assert float(limit.get("upper")) == pytest.approx(model.gripper.travel_m)
+    # GetGeometries still reports all three real parts; only the served model is folded to two.
     assert len(kinematics.gripper_geometries(model, 0.02)) == 3
+
+
+@pytest.mark.parametrize("model", BOTH)
+def test_gripper_model_has_exactly_one_leaf(model):
+    """viam-server's ParseConfig requires a single end effector of a URDF model (OutputFrames
+    are a Viam-JSON concept plain URDF cannot express). Two leaves and the whole gripper drops
+    out of the frame system with only `buildCache # of frames: 2` in the logs to show for it."""
+    root = ET.fromstring(kinematics.gripper_kinematics(model, "primitives")[1])
+    links = {link.get("name") for link in root.findall("link")}
+    parents = {j.find("parent").get("link") for j in root.findall("joint")}
+    assert links - parents == {"finger_left_link"}
+
+
+@pytest.mark.parametrize("model", BOTH)
+def test_gripper_base_carries_the_right_finger_envelope(model):
+    """One <collision> per link, so the right finger's travel envelope is folded into
+    gripper_base's box rather than served as a second body or a second link."""
+    root = ET.fromstring(kinematics.gripper_kinematics(model, "primitives")[1])
+    base_link = root.find("link[@name='gripper_base']")
+    assert len(base_link.findall("collision")) == 1
+    center = [float(v) for v in base_link.find("collision/origin").get("xyz").split()]
+    size = [float(v) for v in base_link.find("collision/geometry/box").get("size").split()]
+
+    g = model.gripper
+    body = model.primitives[model.mount_asset_key]
+    right = model.primitives[g.right_key]
+    ri = max(range(3), key=lambda k: abs(g.axis[k]))
+    env_center, env_size = list(right["center"]), list(right["size"])
+    env_center[ri] += g.right_travel_sign * g.travel_m / 2  # the envelope over the full travel
+    env_size[ri] += g.travel_m
+    xyz, rpy = g.right_origin
+    corners = kinematics._box_corners(env_center, env_size, spatial._transform(spatial._rot_rpy(*rpy), list(xyz)))
+
+    # the jaw axis in gripper_base's frame: the finger's travel axis through the finger's rpy
+    jaw = spatial.rotate(spatial._transform(spatial._rot_rpy(*rpy), [0, 0, 0]), g.axis)
+    i = max(range(3), key=lambda k: abs(jaw[k]))
+    # 1e-6 m of slack: the served origin and size are _fmt'd to six significant digits
+    lo, hi = center[i] - size[i] / 2 - 1e-6, center[i] + size[i] / 2 + 1e-6
+    assert lo <= body["center"][i] - body["size"][i] / 2 and hi >= body["center"][i] + body["size"][i] / 2
+    assert lo <= min(c[i] for c in corners) and hi >= max(c[i] for c in corners)
+    # and the envelope really did widen it, rather than sitting inside the body box
+    assert size[i] > body["size"][i]
 
 
 def test_rs_gripper_fingers_are_set_back_from_the_mount():
