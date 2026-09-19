@@ -1,7 +1,7 @@
 pytest>=8
 pytest-asyncio>=0.23
 ruff>=0.5
-numpy
+numpy==2.5.3  # with trimesh and fast-simplification below: the exact asset-build environment
 pytransform3d
 trimesh==5.1.0  # the build the committed assets and their ATTRIBUTION files record
-fast-simplification
+fast-simplification==0.2.0

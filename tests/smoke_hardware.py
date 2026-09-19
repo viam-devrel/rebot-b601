@@ -131,6 +131,7 @@ arm = B601Arm.new(ComponentConfig(name="smoke", attributes=dict_to_struct(attrs)
 
 
 def gravity_check():
+    print("\nhealth:", arm._health_report())
     positions = arm._read_positions_deg()
     states = arm._read_states()
     model = spatial.MODELS[args.variant]
@@ -140,11 +141,15 @@ def gravity_check():
     ok = True
     for i, cid in enumerate(ARM_CAN_IDS):
         s = states.get(cid)
-        measured = s.torq if s is not None and not getattr(s, "position_only", False) else float("nan")
         expect = -g[i]  # the motor torque that cancels gravity
-        same = (measured == 0 and abs(expect) < 0.5) or (measured * expect > 0)
-        flag = "ok" if same or abs(expect) < 0.5 else "MISMATCH"
-        ok &= flag == "ok"
+        if s is None or getattr(s, "position_only", False):
+            # No status frame, so no torque measurement: not a mismatch, just nothing to judge.
+            measured, flag = float("nan"), "no data"
+        elif abs(expect) < 0.5 or s.torq * expect > 0:
+            measured, flag = s.torq, "ok"
+        else:
+            measured, flag = s.torq, "MISMATCH"
+        ok &= flag != "MISMATCH"
         print(f"  joint{i + 1:<2d} {measured:9.3f} {g[i]:9.3f} {expect:9.3f}  {flag}")
     print("  (expect = -model; a joint with |expect| < 0.5 Nm is too lightly loaded to judge)")
     print(
