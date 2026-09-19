@@ -1,6 +1,6 @@
 """Hardware smoke test for the B601 (DM or RS).
 
-Read-only by default: prints joint state (and, for DM, forward kinematics) and never
+Read-only by default: prints joint state and forward kinematics (both variants) and never
 enables torque. With --move it nudges joint 6 by +5 deg and back, then stops; torque is
 enabled only after you confirm at an explicit prompt, and the move is refused with the
 arm's own message if any motor reports a fault, a collision or an over-temperature.
@@ -81,12 +81,13 @@ if vendor == "robstride":
         bus.motor(cid).robstride_set_active_report(True)
     time.sleep(0.3)
 positions = show(bus)
-if args.variant == "dm" and len(positions) == 6:
-    x, y, z, ox, oy, oz, theta = spatial.end_position(positions)
+if len(positions) == 6:
+    x, y, z, ox, oy, oz, theta = spatial.MODELS[args.variant].end_position(positions)
     print(
-        f"\nend effector (FK): x={x:.1f} y={y:.1f} z={z:.1f} mm  o=({ox:.3f},{oy:.3f},{oz:.3f}) theta={theta:.1f} deg"
+        f"\nend mount (FK, {args.variant}): x={x:.1f} y={y:.1f} z={z:.1f} mm  "
+        f"o=({ox:.3f},{oy:.3f},{oz:.3f}) theta={theta:.1f} deg"
     )
-elif args.variant == "rs":
+if args.variant == "rs":
     # No status stream here (motors are unconfigured), so RS positions come from mechPos
     # parameter reads and report "position only (no status frame)" -- expected, and why
     # this check works with torque off.

@@ -6,6 +6,7 @@ import pytest
 from viam.proto.component.arm import JointPositions
 
 from src.rebot_b601 import bus as bus_mod
+from src.rebot_b601 import spatial
 from src.rebot_b601.arm import ARM_CAN_IDS, B601Arm
 from src.rebot_b601.bus import BusError, SharedBus, canonical_device
 from src.rebot_b601.damiao import JointHealth, MotorFault
@@ -346,3 +347,43 @@ async def test_raw_state_on_rs_reports_health_dicts(factory):
     for name in ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6"):
         assert r["raw_state"][name]["position_only"] is False
         assert r["raw_state"][name]["status"] == "ok"
+
+
+async def test_rs_arm_serves_the_rs_model(factory):
+    import xml.etree.ElementTree as ET
+
+    rs = B601Arm.new(make_config("arm", **RS), {})
+    dm = B601Arm.new(make_config("arm2", port="/dev/fake1"), {})
+    assert rs.model is spatial.MODELS["rs"] and dm.model is spatial.MODELS["dm"]
+    root = ET.fromstring((await rs.get_kinematics())[1])
+    assert root.get("name") == "rebot_b601_rs"
+    assert root.find("joint[@name='joint2']/limit").get("lower") == str(math.radians(-5.0))
+    p_rs = await rs.get_end_position()
+    p_dm = await dm.get_end_position()
+    assert math.isclose(p_rs.x, 301.7, abs_tol=0.5) and math.isclose(p_rs.z, 217.7, abs_tol=0.5)
+    assert not math.isclose(p_rs.x, p_dm.x, abs_tol=5.0)
+
+
+async def test_rs_manual_torques_use_the_rs_model_but_stay_zero_until_enabled(factory):
+    rs = B601Arm.new(make_config("arm", **RS), {})
+    assert rs.gravity_scale == 0.0  # still forced off until the bench check (Task 8)
+    assert rs.manual_torques([0] * 6) == [0.0] * 6
+
+
+def test_dm_manual_torques_clamp_to_the_dm_efforts(factory):
+    dm = B601Arm.new(make_config("arm", port="/dev/fake0", gravity_scale=1000.0), {})
+    taus = dm.manual_torques([0] * 6)
+    assert all(abs(t) <= e + 1e-9 for t, e in zip(taus, spatial.MODELS["dm"].effort_nm))
+    assert any(abs(t) == e for t, e in zip(taus, spatial.MODELS["dm"].effort_nm) if e)  # the clamp bit
+
+
+def test_missing_primitives_are_warned_about_once_at_configure(factory, caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        B601Arm.new(make_config("arm", **RS), {})  # assets/rs does not exist until Task 6
+    assert any("no collision primitives" in r.getMessage() for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        B601Arm.new(make_config("arm2", port="/dev/fake1"), {})  # DM has assets
+    assert not any("no collision primitives" in r.getMessage() for r in caplog.records)

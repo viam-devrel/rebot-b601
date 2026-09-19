@@ -1,4 +1,6 @@
-"""Viam arm component for the Seeed Studio reBot Arm B601-DM (6 DoF, Damiao CAN motors)."""
+"""Viam arm component for the Seeed Studio reBot Arm B601
+(DM: Damiao CAN motors over a serial bridge; RS: RobStride motors over CAN).
+"""
 
 import asyncio
 import math
@@ -166,6 +168,16 @@ class B601Arm(Arm, EasyResource):
         rs = self.variant == "rs"
         vendor = VARIANT_VENDOR[self.variant]
         self.model = spatial.MODELS[self.variant]
+        if not self.model.primitives:
+            # ponytail: log only. Raising would refuse to build an RS arm before its assets
+            # exist, but a primitives-mode URDF with zero boxes lets the planner route the arm
+            # through itself, so this warning is the only signal that collision data is missing.
+            LOGGER.warning(
+                "no collision primitives for the %s model under %s; the served URDF and "
+                "get_geometries carry no collision bodies",
+                self.variant,
+                self.model.assets_dir,
+            )
         port = attrs.get("port") or detect_port()
         baud = int(attrs.get("baud", DEFAULT_BAUD))
 
@@ -636,10 +648,10 @@ class B601Arm(Arm, EasyResource):
     def manual_torques(self, positions_deg: Sequence[float]) -> List[float]:
         """Feed-forward torques (Nm) that cancel gravity at the given pose."""
         rads = [math.radians(d) for d in positions_deg]
-        g = spatial.gravity_torques(rads, self.gravity_vector, self.payload_kg)
+        g = self.model.gravity_torques(rads, self.gravity_vector, self.payload_kg)
         out = []
         for i, tau in enumerate(g):
-            limit = spatial.JOINT_EFFORT_NM[i] or 1e9
+            limit = self.model.effort_nm[i] or 1e9
             out.append(_clamp(-tau * self.gravity_scale, -limit, limit))
         return out
 
@@ -696,7 +708,7 @@ class B601Arm(Arm, EasyResource):
 
     async def get_end_position(self, *, extra=None, timeout=None, **kwargs) -> Pose:
         positions = await asyncio.to_thread(self._read_positions_deg)
-        x, y, z, ox, oy, oz, theta = spatial.end_position(positions)
+        x, y, z, ox, oy, oz, theta = self.model.end_position(positions)
         return Pose(x=x, y=y, z=z, o_x=ox, o_y=oy, o_z=oz, theta=theta)
 
     async def move_to_position(self, pose: Pose, *, extra=None, timeout=None, **kwargs):
