@@ -289,17 +289,8 @@ class Model:
 
         Returns ((x, y, z) in meters, 3x3 rotation matrix) of end_link in base_link.
         """
-        t = _transform([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])
-        qi = 0
-        for joint in self.chain:
-            t = _mat_mul(t, joint.origin)
-            if joint.type == "revolute":
-                rot = _rot_axis_angle(joint.axis, joint_rads[qi])
-                t = _mat_mul(t, _transform(rot, [0, 0, 0]))
-                qi += 1
-        pos = (t[0][3], t[1][3], t[2][3])
-        rot = [row[:3] for row in t[:3]]
-        return pos, rot
+        t = self.link_transforms(joint_rads)[-1]
+        return (t[0][3], t[1][3], t[2][3]), [row[:3] for row in t[:3]]
 
     def link_transforms(self, joint_rads):
         """4x4 transforms of every link frame (in chain order) in the base frame.
